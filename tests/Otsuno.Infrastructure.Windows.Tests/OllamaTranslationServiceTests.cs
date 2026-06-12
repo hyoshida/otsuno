@@ -29,8 +29,47 @@ public class OllamaTranslationServiceTests {
         Assert.Contains("test-model", handler.RequestContent);
         Assert.Contains("Start Game", handler.RequestContent);
         Assert.Contains("\"stream\":false", handler.RequestContent);
+        Assert.Contains("\"format\":\"json\"", handler.RequestContent);
+        Assert.Contains("\"temperature\":0", handler.RequestContent);
         Assert.Contains("\"model\":", handler.RequestContent);
         Assert.Contains("\"prompt\":", handler.RequestContent);
+        Assert.Contains("Japanese (ja)", handler.RequestContent);
+    }
+
+    [Fact]
+    public async Task TranslateAsyncReadsTranslatedTextFromJsonResponse() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "ゲーム開始" }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("Start Game", "auto", "ja");
+
+        var response = await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Equal("ゲーム開始", response.TranslatedText);
+    }
+
+    [Fact]
+    public async Task TranslateAsyncDoesNotDisplayPromptLeak() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Return valid JSON only with this exact shape:" }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("Start Game", "auto", "ja");
+
+        var response = await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Equal("Start Game", response.TranslatedText);
     }
 
     [Fact]
