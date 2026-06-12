@@ -15,6 +15,8 @@ using Otsuno.Infrastructure.Windows.Translation;
 namespace Otsuno.App;
 
 public partial class MainWindow : Window {
+    protected const string PaddleOcrEngineName = "PaddleOCR";
+    protected const string WindowsOcrEngineName = "Windows OCR";
     protected static readonly Brush NormalStatusBrush = new SolidColorBrush(Color.FromRgb(215, 222, 233));
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
     protected static readonly Brush BlackLogBrush = new SolidColorBrush(Color.FromRgb(143, 160, 184));
@@ -55,6 +57,7 @@ public partial class MainWindow : Window {
         TranslationModelCombo.SelectionChanged += TranslationModelCombo_SelectionChanged;
         SourceLanguageCombo.SelectionChanged += SourceLanguageCombo_SelectionChanged;
         TargetLanguageCombo.SelectionChanged += TargetLanguageCombo_SelectionChanged;
+        OcrEngineCombo.SelectionChanged += OcrEngineCombo_SelectionChanged;
         PipelinePresetCombo.SelectionChanged += PipelinePresetCombo_SelectionChanged;
         TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
         DebugModeCheckBox.Checked += DebugModeCheckBox_Changed;
@@ -73,13 +76,7 @@ public partial class MainWindow : Window {
     protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {
         var sourceLanguage = GetSelectedSourceLanguage();
         var targetLanguage = GetSelectedTargetLanguage();
-        ReleasePaddleOcrEngine();
-        paddleOcrEngine = new PaddleOcrEngine(sourceLanguage, targetLanguage);
-        paddleOcrEngine.StatusChanged += PaddleOcrEngine_StatusChanged;
-        ocrEngine = new FallbackOcrEngine(
-            paddleOcrEngine,
-            new WindowsOcrEngine(sourceLanguage, targetLanguage)
-        );
+        ocrEngine = CreateOcrEngine(sourceLanguage, targetLanguage);
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
             ocrEngine,
@@ -87,6 +84,20 @@ public partial class MainWindow : Window {
             new InMemoryTranslationCache(),
             GetSelectedPipelineOptions(),
             sourceLanguage
+        );
+    }
+
+    protected virtual IOcrEngine CreateOcrEngine(string sourceLanguage, string targetLanguage) {
+        ReleasePaddleOcrEngine();
+        if (string.Equals(GetSelectedOcrEngine(), WindowsOcrEngineName, StringComparison.Ordinal)) {
+            return new WindowsOcrEngine(sourceLanguage, targetLanguage);
+        }
+
+        paddleOcrEngine = new PaddleOcrEngine(sourceLanguage, targetLanguage);
+        paddleOcrEngine.StatusChanged += PaddleOcrEngine_StatusChanged;
+        return new FallbackOcrEngine(
+            paddleOcrEngine,
+            new WindowsOcrEngine(sourceLanguage, targetLanguage)
         );
     }
 
@@ -196,6 +207,10 @@ public partial class MainWindow : Window {
         SaveSettings();
     }
 
+    protected virtual void OcrEngineCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) {
+        SaveSettings();
+    }
+
     protected virtual void PipelinePresetCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) {
         SaveSettings();
     }
@@ -213,6 +228,7 @@ public partial class MainWindow : Window {
         TranslationModelCombo.IsEnabled = false;
         SourceLanguageCombo.IsEnabled = false;
         TargetLanguageCombo.IsEnabled = false;
+        OcrEngineCombo.IsEnabled = false;
         PipelinePresetCombo.IsEnabled = false;
         overlayWindow.Show();
         timer.Start();
@@ -229,6 +245,7 @@ public partial class MainWindow : Window {
         TranslationModelCombo.IsEnabled = true;
         SourceLanguageCombo.IsEnabled = true;
         TargetLanguageCombo.IsEnabled = true;
+        OcrEngineCombo.IsEnabled = true;
         PipelinePresetCombo.IsEnabled = true;
         SetRunningState(false);
         UpdateOcrStatus();
@@ -451,6 +468,10 @@ public partial class MainWindow : Window {
         return RealtimeTranslationPipelineOptions.FromPreset(preset);
     }
 
+    protected virtual string GetSelectedOcrEngine() {
+        return GetComboBoxText(OcrEngineCombo, AppSettings.Default.OcrEngine);
+    }
+
     protected virtual string GetComboBoxText(System.Windows.Controls.ComboBox comboBox, string fallback) {
         if (comboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item) {
             return item.Content?.ToString()?.Trim() is { Length: > 0 } selectedContent ? selectedContent : fallback;
@@ -463,6 +484,7 @@ public partial class MainWindow : Window {
         SelectComboBoxItem(TranslationModelCombo, settings.TranslationModel);
         SelectComboBoxItem(SourceLanguageCombo, settings.SourceLanguage);
         SelectComboBoxItem(TargetLanguageCombo, settings.TargetLanguage);
+        SelectComboBoxItem(OcrEngineCombo, settings.OcrEngine);
         SelectComboBoxItem(PipelinePresetCombo, settings.PipelinePreset);
         TranslationFrequencySlider.Value = ClampFrequency(settings.TranslationFrequency);
         DebugModeCheckBox.IsChecked = settings.DebugMode;
@@ -475,7 +497,8 @@ public partial class MainWindow : Window {
             ClampFrequency(TranslationFrequencySlider.Value),
             DebugModeCheckBox.IsChecked == true,
             GetComboBoxText(PipelinePresetCombo, AppSettings.Default.PipelinePreset),
-            GetComboBoxText(SourceLanguageCombo, AppSettings.Default.SourceLanguage)
+            GetComboBoxText(SourceLanguageCombo, AppSettings.Default.SourceLanguage),
+            GetSelectedOcrEngine()
         ));
     }
 
