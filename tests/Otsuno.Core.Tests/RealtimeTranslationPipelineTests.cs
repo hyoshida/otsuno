@@ -284,7 +284,7 @@ public class RealtimeTranslationPipelineTests {
         translator.Complete();
         await translator.Completed.Task;
 
-        var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        var second = await ProcessUntilRegionAsync(pipeline);
 
         var region = Assert.Single(second.Regions);
         Assert.True(region.FromCache);
@@ -322,6 +322,37 @@ public class RealtimeTranslationPipelineTests {
         );
     }
 
+    [Fact]
+    public async Task FallbackOcrEngineUsesFallbackAfterPrimaryFailure() {
+        var frame = new CapturedFrame("test", 100, 100, DateTimeOffset.UtcNow, [0, 0, 0, 0]);
+        var fallbackRegions = new[] {
+            new TextRegion("fallback", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+        };
+        var engine = new FallbackOcrEngine(
+            new FailingOcrEngine(),
+            new StubOcrEngine(fallbackRegions)
+        );
+
+        var first = await engine.RecognizeAsync(frame, CancellationToken.None);
+        var second = await engine.RecognizeAsync(frame, CancellationToken.None);
+
+        Assert.Equal("fallback", Assert.Single(first).Id);
+        Assert.Equal("fallback", Assert.Single(second).Id);
+    }
+
+    protected static async Task<TranslationFrame> ProcessUntilRegionAsync(RealtimeTranslationPipeline pipeline) {
+        for (var i = 0; i < 10; i++) {
+            var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+            if (frame.Regions.Count > 0) {
+                return frame;
+            }
+
+            await Task.Delay(20);
+        }
+
+        return await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+    }
+
     protected class StubCaptureService(CapturedFrame? frame) : IScreenCaptureService {
         public Task<CapturedFrame?> CaptureAsync(CancellationToken cancellationToken) {
             return Task.FromResult(frame);
@@ -331,6 +362,12 @@ public class RealtimeTranslationPipelineTests {
     protected class StubOcrEngine(IReadOnlyList<TextRegion> regions) : IOcrEngine {
         public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
             return Task.FromResult(regions);
+        }
+    }
+
+    protected class FailingOcrEngine : IOcrEngine {
+        public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            throw new InvalidOperationException("OCR failed.");
         }
     }
 

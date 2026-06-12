@@ -55,7 +55,10 @@ public partial class MainWindow : Window {
         var targetLanguage = GetSelectedTargetLanguage();
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
-            new WindowsOcrEngine(sourceLanguage, targetLanguage),
+            new FallbackOcrEngine(
+                new PaddleOcrEngine(sourceLanguage, targetLanguage),
+                new WindowsOcrEngine(sourceLanguage, targetLanguage)
+            ),
             new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
             GetSelectedPipelineOptions()

@@ -64,7 +64,7 @@ public class WindowsOcrEngine : IOcrEngine {
         return sourceEngines;
     }
 
-    protected virtual bool IsDetectLanguage(string sourceLanguage) {
+    public static bool IsDetectLanguage(string sourceLanguage) {
         return string.Equals(sourceLanguage, DetectLanguage, StringComparison.OrdinalIgnoreCase)
             || string.Equals(sourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
             || string.Equals(sourceLanguage, "detect", StringComparison.OrdinalIgnoreCase);

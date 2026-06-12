@@ -46,7 +46,15 @@ dotnet test tests/Otsuno.Infrastructure.Windows.Tests/Otsuno.Infrastructure.Wind
 
 The test suite uses xUnit. `Otsuno.Core.Tests` covers the translation cache and realtime translation pipeline. `Otsuno.Infrastructure.Windows.Tests` covers Windows infrastructure behavior that can be tested without requiring a live game, OCR target window, or Ollama server.
 
-The app currently uses real primary-screen capture, Windows OCR, and an Ollama-compatible local translation endpoint.
+The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
+
+Optional PaddleOCR setup:
+
+```bash
+python -m pip install paddleocr paddlepaddle
+```
+
+If Python is not available as `python`, set `OTSUNO_PYTHON` to the Python executable path before starting the app. If PaddleOCR cannot be started, Otsuno falls back to Windows OCR.
 
 Current translation backend:
 
