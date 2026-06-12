@@ -64,7 +64,8 @@ public partial class MainWindow : Window {
             ocrEngine,
             new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
-            GetSelectedPipelineOptions()
+            GetSelectedPipelineOptions(),
+            sourceLanguage
         );
     }
 

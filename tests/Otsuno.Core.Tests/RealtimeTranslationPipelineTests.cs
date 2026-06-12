@@ -323,6 +323,29 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceUsesConfiguredSourceLanguageForTranslationRequests() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("text", "今月に入って何回目ですか？", new ScreenRect(10, 10, 180, 28), 0.9),
+        };
+        var translator = new BatchCountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            translator,
+            new InMemoryTranslationCache(),
+            RealtimeTranslationPipelineOptions.Default,
+            "ja"
+        );
+
+        await pipeline.ProcessOnceAsync("en", CancellationToken.None);
+
+        var request = Assert.Single(translator.LastBatch);
+        Assert.Equal("ja", request.SourceLanguage);
+        Assert.Equal("en", request.TargetLanguage);
+    }
+
+    [Fact]
     public async Task FallbackOcrEngineUsesFallbackAfterPrimaryFailure() {
         var frame = new CapturedFrame("test", 100, 100, DateTimeOffset.UtcNow, [0, 0, 0, 0]);
         var fallbackRegions = new[] {

@@ -18,6 +18,7 @@ public class RealtimeTranslationPipeline {
     protected readonly ITranslationService translationService;
     protected readonly ITranslationCache translationCache;
     protected readonly RealtimeTranslationPipelineOptions options;
+    protected readonly string sourceLanguage;
     protected readonly ConcurrentDictionary<string, byte> pendingTranslations = new(StringComparer.Ordinal);
     protected readonly ConcurrentDictionary<string, TimeSpan> translationDurations = new(StringComparer.Ordinal);
     protected readonly List<StableTextRegion> stableRegions = [];
@@ -32,7 +33,8 @@ public class RealtimeTranslationPipeline {
             ocrEngine,
             translationService,
             translationCache,
-            RealtimeTranslationPipelineOptions.Default
+            RealtimeTranslationPipelineOptions.Default,
+            "auto"
         ) {
     }
 
@@ -41,12 +43,29 @@ public class RealtimeTranslationPipeline {
         IOcrEngine ocrEngine,
         ITranslationService translationService,
         ITranslationCache translationCache,
-        RealtimeTranslationPipelineOptions options) {
+        RealtimeTranslationPipelineOptions options) : this(
+            captureService,
+            ocrEngine,
+            translationService,
+            translationCache,
+            options,
+            "auto"
+        ) {
+    }
+
+    public RealtimeTranslationPipeline(
+        IScreenCaptureService captureService,
+        IOcrEngine ocrEngine,
+        ITranslationService translationService,
+        ITranslationCache translationCache,
+        RealtimeTranslationPipelineOptions options,
+        string sourceLanguage) {
         this.captureService = captureService;
         this.ocrEngine = ocrEngine;
         this.translationService = translationService;
         this.translationCache = translationCache;
         this.options = options;
+        this.sourceLanguage = NormalizeSourceLanguage(sourceLanguage);
     }
 
     public virtual async Task<TranslationFrame> ProcessOnceAsync(string targetLanguage, CancellationToken cancellationToken) {
@@ -526,7 +545,18 @@ public class RealtimeTranslationPipeline {
     }
 
     protected virtual TranslationRequest CreateTranslationRequest(TextRegion region, string targetLanguage) {
-        return new TranslationRequest(region.Text, "auto", targetLanguage);
+        return new TranslationRequest(region.Text, sourceLanguage, targetLanguage);
+    }
+
+    protected virtual string NormalizeSourceLanguage(string sourceLanguage) {
+        var normalized = sourceLanguage.Trim();
+        if (normalized.Length == 0
+            || string.Equals(normalized, "Detect language", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "detect", StringComparison.OrdinalIgnoreCase)) {
+            return "auto";
+        }
+
+        return normalized;
     }
 
     protected virtual TranslatedRegion CreateTranslatedRegion(TextRegion region, TranslationResponse translation) {

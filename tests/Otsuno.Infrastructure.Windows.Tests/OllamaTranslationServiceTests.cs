@@ -61,6 +61,25 @@ public class OllamaTranslationServiceTests {
     }
 
     [Fact]
+    public async Task TranslateAsyncIncludesSourceLanguageHintWhenSourceIsKnown() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "How many times this month?" }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("今月に入って何回目ですか？", "ja", "en");
+
+        await service.TranslateAsync(request, CancellationToken.None);
+
+        var prompt = ReadPrompt(handler.RequestContent);
+        Assert.Contains("Source language hint: 日本語.", prompt);
+    }
+
+    [Fact]
     public async Task TranslateAsyncReadsTranslatedTextFromJsonResponse() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
             Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "ゲーム開始" }) })

@@ -79,20 +79,37 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
 
     protected virtual string CreatePrompt(IReadOnlyList<TranslationRequest> requests) {
         var targetLanguage = GetTargetLanguagePrompt(requests[0].TargetLanguage);
+        var sourceLanguageHint = CreateSourceLanguageHint(requests);
         return string.Join(
             Environment.NewLine,
             targetLanguage.Instructions,
+            sourceLanguageHint,
             "Return valid JSON only with this exact shape:",
             "{\"translations\":[{\"id\":\"t0\",\"translatedText\":\"...\"}]}",
             "Source texts:",
             JsonSerializer.Serialize(CreatePromptItems(requests))
-        );
+        ).Replace($"{Environment.NewLine}{Environment.NewLine}", Environment.NewLine, StringComparison.Ordinal);
     }
 
     protected virtual IReadOnlyList<OllamaPromptItem> CreatePromptItems(IReadOnlyList<TranslationRequest> requests) {
         return requests
             .Select((request, index) => new OllamaPromptItem($"t{index}", request.SourceText))
             .ToArray();
+    }
+
+    protected virtual string CreateSourceLanguageHint(IReadOnlyList<TranslationRequest> requests) {
+        var sourceLanguage = GetSharedSourceLanguage(requests);
+        return sourceLanguage is null ? string.Empty : $"Source language hint: {GetTargetLanguagePrompt(sourceLanguage).LanguageName}.";
+    }
+
+    protected virtual string? GetSharedSourceLanguage(IReadOnlyList<TranslationRequest> requests) {
+        var sourceLanguages = requests
+            .Select(request => request.SourceLanguage.Trim())
+            .Where(sourceLanguage => sourceLanguage.Length > 0)
+            .Where(sourceLanguage => !string.Equals(sourceLanguage, "auto", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return sourceLanguages.Length == 1 ? sourceLanguages[0] : null;
     }
 
     protected virtual string NormalizeResponse(string text) {
@@ -268,8 +285,6 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     protected virtual bool LooksLikePromptLeak(string text) {
         return text.Contains("Source text:", StringComparison.OrdinalIgnoreCase)
             || text.Contains("Return valid JSON", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("You are a game UI translator", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Translate the source text", StringComparison.OrdinalIgnoreCase)
             || text.Contains("I can't help", StringComparison.OrdinalIgnoreCase)
             || text.Contains("Please provide", StringComparison.OrdinalIgnoreCase);
     }
@@ -277,21 +292,27 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     protected virtual TargetLanguagePrompt GetTargetLanguagePrompt(string targetLanguage) {
         return targetLanguage.ToLowerInvariant() switch {
             "ja" => new TargetLanguagePrompt(
+                "日本語",
                 "すべての Source texts を自然な日本語に翻訳してください。名前、数字、ホットキー、コントローラーのボタン、ファイルパスはそのままにしてください。日本語以外のテキストは出力しないでください。"
             ),
             "en" => new TargetLanguagePrompt(
+                "English",
                 "Translate every source texts into natural English. Preserve names, numbers, hotkeys, controller buttons, and file paths. Do not output any text other than English."
             ),
             "ko" => new TargetLanguagePrompt(
+                "한국어",
                 "모든 소스 텍스트를 자연스러운 한국어로 번역하세요. 이름, 숫자, 단축키, 컨트롤러 버튼 및 파일 경로는 그대로 유지하세요. 한국어 이외의 텍스트는 출력하지 마세요."
             ),
             "zh-hans" => new TargetLanguagePrompt(
+                "简体中文",
                 "将所有源文本翻译成简体中文。保留名称、数字、快捷键、控制器按钮和文件路径。不要输出除简体中文以外的文本。"
             ),
             "zh-hant" => new TargetLanguagePrompt(
+                "繁體中文",
                 "將所有源文本翻譯成繁體中文。保留名稱、數字、快捷鍵、控制器按鈕和文件路徑。不要輸出除繁體中文以外的文本。"
             ),
             _ => new TargetLanguagePrompt(
+                targetLanguage,
                 $"Translate into {targetLanguage} only. Do not output a different language."
             )
         };
@@ -318,7 +339,7 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
 
     protected record OllamaGenerateResponse([property: JsonPropertyName("response")] string Response);
 
-    protected record TargetLanguagePrompt(string Instructions);
+    protected record TargetLanguagePrompt(string LanguageName, string Instructions);
 
     protected record OllamaPromptItem(
         [property: JsonPropertyName("id")] string Id,
