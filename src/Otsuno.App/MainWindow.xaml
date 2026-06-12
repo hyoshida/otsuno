@@ -33,6 +33,12 @@
                     <ComboBoxItem Content="zh-Hans" />
                     <ComboBoxItem Content="zh-Hant" />
                 </ComboBox>
+                <TextBlock Text="Preset" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="PipelinePresetCombo" Width="108" SelectedIndex="0" Margin="0,0,12,0">
+                    <ComboBoxItem Content="LowLatency" />
+                    <ComboBoxItem Content="Balanced" />
+                    <ComboBoxItem Content="Quality" />
+                </ComboBox>
                 <TextBlock Text="Frequency" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <Slider x:Name="TranslationFrequencySlider"
                         Width="130"

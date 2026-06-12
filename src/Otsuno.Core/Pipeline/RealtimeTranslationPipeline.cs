@@ -447,6 +447,10 @@ public record RealtimeTranslationPipelineOptions(
     double MaxStableTextDistanceRatio,
     double StableRegionSmoothingRatio
 ) {
+    public const string LowLatencyPreset = "LowLatency";
+    public const string BalancedPreset = "Balanced";
+    public const string QualityPreset = "Quality";
+
     public static RealtimeTranslationPipelineOptions Default { get; } = new(
         MaxTextRegionsPerFrame: 16,
         MaxUncachedTranslationsPerFrame: 3,
@@ -486,4 +490,53 @@ public record RealtimeTranslationPipelineOptions(
         MaxStableTextDistanceRatio: 0.25,
         StableRegionSmoothingRatio: 0.35
     );
+
+    public static RealtimeTranslationPipelineOptions Balanced { get; } = new(
+        MaxTextRegionsPerFrame: 18,
+        MaxUncachedTranslationsPerFrame: 8,
+        MaxBackgroundTranslations: 16,
+        AwaitUncachedTranslations: false,
+        MinTextLength: 2,
+        MaxTextLength: 650,
+        MinRegionWidth: 12,
+        MinRegionHeight: 8,
+        MaxTextBlockLineGap: 20,
+        MaxTextBlockIndent: 56,
+        MaxTextBlockLineGapRatio: 1.0,
+        MinTextBlockHorizontalOverlapRatio: 0.3,
+        MaxStableRegionCenterDistance: 72,
+        StableRegionRetentionFrames: 10,
+        MaxStableTextDistance: 5,
+        MaxStableTextDistanceRatio: 0.3,
+        StableRegionSmoothingRatio: 0.3
+    );
+
+    public static RealtimeTranslationPipelineOptions Quality { get; } = new(
+        MaxTextRegionsPerFrame: 28,
+        MaxUncachedTranslationsPerFrame: 12,
+        MaxBackgroundTranslations: 24,
+        AwaitUncachedTranslations: false,
+        MinTextLength: 1,
+        MaxTextLength: 900,
+        MinRegionWidth: 8,
+        MinRegionHeight: 6,
+        MaxTextBlockLineGap: 28,
+        MaxTextBlockIndent: 72,
+        MaxTextBlockLineGapRatio: 1.25,
+        MinTextBlockHorizontalOverlapRatio: 0.25,
+        MaxStableRegionCenterDistance: 96,
+        StableRegionRetentionFrames: 14,
+        MaxStableTextDistance: 6,
+        MaxStableTextDistanceRatio: 0.35,
+        StableRegionSmoothingRatio: 0.25
+    );
+
+    public static RealtimeTranslationPipelineOptions FromPreset(string preset) {
+        return preset switch {
+            LowLatencyPreset => LowLatency,
+            BalancedPreset => Balanced,
+            QualityPreset => Quality,
+            _ => LowLatency
+        };
+    }
 }

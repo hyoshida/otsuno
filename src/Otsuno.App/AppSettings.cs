@@ -3,7 +3,13 @@ using System.Text.Json;
 
 namespace Otsuno.App;
 
-public record AppSettings(string TranslationModel, string TargetLanguage, double TranslationFrequency, bool DebugMode = false) {
+public record AppSettings(
+    string TranslationModel,
+    string TargetLanguage,
+    double TranslationFrequency,
+    bool DebugMode = false,
+    string PipelinePreset = "LowLatency"
+) {
     public static AppSettings Default { get; } = new("qwen2.5:1.5b", "ja", 1.33);
 }
 

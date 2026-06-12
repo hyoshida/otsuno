@@ -36,6 +36,7 @@ public partial class MainWindow : Window {
         ApplySettings(settingsStore.Load());
         TranslationModelCombo.SelectionChanged += TranslationModelCombo_SelectionChanged;
         TargetLanguageCombo.SelectionChanged += TargetLanguageCombo_SelectionChanged;
+        PipelinePresetCombo.SelectionChanged += PipelinePresetCombo_SelectionChanged;
         TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
         DebugModeCheckBox.Checked += DebugModeCheckBox_Changed;
         DebugModeCheckBox.Unchecked += DebugModeCheckBox_Changed;
@@ -54,7 +55,7 @@ public partial class MainWindow : Window {
             new WindowsOcrEngine(),
             new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
-            RealtimeTranslationPipelineOptions.LowLatency
+            GetSelectedPipelineOptions()
         );
     }
 
@@ -142,6 +143,10 @@ public partial class MainWindow : Window {
         SaveSettings();
     }
 
+    protected virtual void PipelinePresetCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) {
+        SaveSettings();
+    }
+
     protected virtual void DebugModeCheckBox_Changed(object sender, RoutedEventArgs e) {
         SaveSettings();
     }
@@ -153,6 +158,7 @@ public partial class MainWindow : Window {
     protected virtual void Start() {
         isRunning = true;
         TranslationModelCombo.IsEnabled = false;
+        PipelinePresetCombo.IsEnabled = false;
         overlayWindow.Show();
         timer.Start();
         SetRunningState(true);
@@ -164,6 +170,7 @@ public partial class MainWindow : Window {
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
         TranslationModelCombo.IsEnabled = true;
+        PipelinePresetCombo.IsEnabled = true;
         SetRunningState(false);
         SetStatus("Stopped.");
     }
@@ -205,6 +212,11 @@ public partial class MainWindow : Window {
         return OllamaTranslationOptions.Default with { Model = model };
     }
 
+    protected virtual RealtimeTranslationPipelineOptions GetSelectedPipelineOptions() {
+        var preset = GetComboBoxText(PipelinePresetCombo, RealtimeTranslationPipelineOptions.LowLatencyPreset);
+        return RealtimeTranslationPipelineOptions.FromPreset(preset);
+    }
+
     protected virtual string GetComboBoxText(System.Windows.Controls.ComboBox comboBox, string fallback) {
         if (comboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item) {
             return item.Content?.ToString()?.Trim() is { Length: > 0 } selectedContent ? selectedContent : fallback;
@@ -216,6 +228,7 @@ public partial class MainWindow : Window {
     protected virtual void ApplySettings(AppSettings settings) {
         SelectComboBoxItem(TranslationModelCombo, settings.TranslationModel);
         SelectComboBoxItem(TargetLanguageCombo, settings.TargetLanguage);
+        SelectComboBoxItem(PipelinePresetCombo, settings.PipelinePreset);
         TranslationFrequencySlider.Value = ClampFrequency(settings.TranslationFrequency);
         DebugModeCheckBox.IsChecked = settings.DebugMode;
     }
@@ -225,7 +238,8 @@ public partial class MainWindow : Window {
             GetComboBoxText(TranslationModelCombo, AppSettings.Default.TranslationModel),
             GetComboBoxText(TargetLanguageCombo, AppSettings.Default.TargetLanguage),
             ClampFrequency(TranslationFrequencySlider.Value),
-            DebugModeCheckBox.IsChecked == true
+            DebugModeCheckBox.IsChecked == true,
+            GetComboBoxText(PipelinePresetCombo, AppSettings.Default.PipelinePreset)
         ));
     }
 
