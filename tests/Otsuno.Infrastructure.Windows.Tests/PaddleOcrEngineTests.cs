@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Otsuno.Infrastructure.Windows.Ocr;
 
 namespace Otsuno.Infrastructure.Windows.Tests;
@@ -83,6 +84,17 @@ public class PaddleOcrEngineTests {
         Assert.Contains(messages, message => message.Contains("PaddleOCR is installed"));
     }
 
+    [Fact]
+    public void ConfigurePythonEnvironmentForcesUtf8Output() {
+        var engine = new CommandStubPaddleOcrEngine();
+        var startInfo = new ProcessStartInfo();
+
+        engine.ConfigureEnvironment(startInfo);
+
+        Assert.Equal("1", startInfo.Environment["PYTHONUTF8"]);
+        Assert.Equal("utf-8", startInfo.Environment["PYTHONIOENCODING"]);
+    }
+
     protected class TestPaddleOcrEngine(string pythonPath, string dedicatedPythonPath) : PaddleOcrEngine("en", "ja", pythonPath, "bridge.py") {
         public Dictionary<string, bool> DependencyResults { get; } = [];
         public List<string> InstallTargets { get; } = [];
@@ -111,6 +123,10 @@ public class PaddleOcrEngineTests {
     protected class CommandStubPaddleOcrEngine() : PaddleOcrEngine("en", "ja", "python", "bridge.py") {
         public void InstallDependencies(string executablePath) {
             InstallPaddleOcrDependencies(executablePath);
+        }
+
+        public void ConfigureEnvironment(ProcessStartInfo startInfo) {
+            ConfigurePythonEnvironment(startInfo);
         }
 
         protected override ProcessResult RunPythonCommand(string executablePath, string arguments, TimeSpan? timeout = null) {

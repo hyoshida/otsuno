@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using Otsuno.Core.Abstractions;
 using Otsuno.Core.Models;
@@ -30,6 +31,8 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
     protected readonly string bridgePath;
     protected string activePythonPath;
     protected readonly SemaphoreSlim processLock = new(1, 1);
+    protected readonly object bridgeErrorLock = new();
+    protected readonly StringBuilder bridgeErrorLog = new();
     protected Process? process;
     protected bool dependenciesChecked;
     protected bool disposed;
@@ -96,7 +99,9 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
         try {
             var bridgeProcess = EnsureProcess();
             var request = JsonSerializer.Serialize(new PaddleOcrRequest(imagePath, language));
+            ReportStatus($"Sending PaddleOCR request for language '{language}'.");
             await bridgeProcess.StandardInput.WriteLineAsync(request.AsMemory(), cancellationToken).ConfigureAwait(false);
+            ReportStatus($"Waiting for PaddleOCR response for language '{language}'.");
             var line = await bridgeProcess.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(line)) {
                 throw new InvalidOperationException(ReadBridgeError(bridgeProcess));
@@ -104,17 +109,20 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
 
             var response = JsonSerializer.Deserialize<PaddleOcrResponse>(line, JsonOptions);
             if (!string.IsNullOrWhiteSpace(response?.Error)) {
+                ReportStatus($"PaddleOCR request failed for language '{language}': {response.Error}");
                 throw new InvalidOperationException(response.Error);
             }
 
-            return response?.Regions
+            var regions = response?.Regions ?? Array.Empty<PaddleOcrRegion>();
+            ReportStatus($"PaddleOCR returned {regions.Count} regions for language '{language}'.");
+            return regions
                 .Select((region, index) => new TextRegion(
                     $"paddle-{language}-{index}",
                     region.Text,
                     new ScreenRect(region.X, region.Y, region.Width, region.Height),
                     region.Confidence
                 ))
-                .ToArray() ?? [];
+                .ToArray();
         } finally {
             processLock.Release();
         }
@@ -131,16 +139,23 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
 
         EnsureDependenciesInstalled();
         process?.Dispose();
+        ClearBridgeErrorLog();
         ReportStatus($"Starting PaddleOCR bridge with Python: {activePythonPath}");
-        process = Process.Start(new ProcessStartInfo {
+        var startInfo = new ProcessStartInfo {
             FileName = activePythonPath,
             Arguments = $"\"{bridgePath}\"",
             UseShellExecute = false,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
-        }) ?? throw new InvalidOperationException("Failed to start PaddleOCR bridge process.");
+        };
+        ConfigurePythonEnvironment(startInfo);
+        process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start PaddleOCR bridge process.");
+        BeginBridgeErrorRead(process);
+        ReportStatus("PaddleOCR bridge process started.");
         return process;
     }
 
@@ -314,14 +329,18 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
 
     protected virtual ProcessResult RunCommand(string executablePath, string arguments, TimeSpan? timeout = null) {
         try {
-            using var dependencyProcess = Process.Start(new ProcessStartInfo {
+            var startInfo = new ProcessStartInfo {
                 FileName = executablePath,
                 Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
                 CreateNoWindow = true
-            }) ?? throw new InvalidOperationException($"Failed to start process: {executablePath}");
+            };
+            ConfigurePythonEnvironment(startInfo);
+            using var dependencyProcess = Process.Start(startInfo) ?? throw new InvalidOperationException($"Failed to start process: {executablePath}");
 
             var outputTask = dependencyProcess.StandardOutput.ReadToEndAsync();
             var errorTask = dependencyProcess.StandardError.ReadToEndAsync();
@@ -355,6 +374,41 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
         return RunPythonCommand(activePythonPath, arguments, timeout);
     }
 
+    protected virtual void ConfigurePythonEnvironment(ProcessStartInfo startInfo) {
+        startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+    }
+
+    protected virtual void BeginBridgeErrorRead(Process bridgeProcess) {
+        bridgeProcess.ErrorDataReceived += (_, e) => {
+            if (string.IsNullOrWhiteSpace(e.Data)) {
+                return;
+            }
+
+            AppendBridgeErrorLog(e.Data);
+            ReportStatus(e.Data);
+        };
+        bridgeProcess.BeginErrorReadLine();
+    }
+
+    protected virtual void AppendBridgeErrorLog(string line) {
+        lock (bridgeErrorLock) {
+            bridgeErrorLog.AppendLine(line);
+        }
+    }
+
+    protected virtual void ClearBridgeErrorLog() {
+        lock (bridgeErrorLock) {
+            bridgeErrorLog.Clear();
+        }
+    }
+
+    protected virtual string GetBridgeErrorLog() {
+        lock (bridgeErrorLock) {
+            return bridgeErrorLog.ToString();
+        }
+    }
+
     protected virtual void ReportStatus(string message) {
         StatusChanged?.Invoke(this, new PaddleOcrStatusChangedEventArgs(message));
     }
@@ -375,9 +429,14 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
     }
 
     protected virtual string ReadBridgeError(Process bridgeProcess) {
-        return bridgeProcess.HasExited
-            ? $"PaddleOCR bridge exited with code {bridgeProcess.ExitCode}: {bridgeProcess.StandardError.ReadToEnd()}"
-            : "PaddleOCR bridge did not return a response.";
+        var errorLog = GetBridgeErrorLog().Trim();
+        if (bridgeProcess.HasExited) {
+            return $"PaddleOCR bridge exited with code {bridgeProcess.ExitCode}: {errorLog}";
+        }
+
+        return string.IsNullOrWhiteSpace(errorLog)
+            ? "PaddleOCR bridge did not return a response."
+            : $"PaddleOCR bridge did not return a response. Recent bridge logs: {errorLog}";
     }
 
     protected virtual void TryDelete(string path) {
