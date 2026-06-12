@@ -23,6 +23,8 @@ public class RealtimeTranslationPipeline {
     protected readonly ConcurrentDictionary<string, byte> pendingTranslations = new(StringComparer.Ordinal);
     protected readonly ConcurrentDictionary<string, TimeSpan> translationDurations = new(StringComparer.Ordinal);
     protected readonly List<StableTextRegion> stableRegions = [];
+    protected FrameSnapshot? previousFrameSnapshot;
+    protected TranslationFrame? lastTranslationFrame;
     protected long frameIndex;
 
     public RealtimeTranslationPipeline(
@@ -76,6 +78,12 @@ public class RealtimeTranslationPipeline {
             return new TranslationFrame(DateTimeOffset.UtcNow, Array.Empty<TranslatedRegion>());
         }
 
+        if (ShouldSkipOcr(frame)) {
+            UpdatePreviousFrameSnapshot(frame);
+            return CreateSkippedFrame(frame);
+        }
+
+        UpdatePreviousFrameSnapshot(frame);
         var ocrStopwatch = Stopwatch.StartNew();
         var textRegions = await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
         ocrStopwatch.Stop();
@@ -121,7 +129,55 @@ public class RealtimeTranslationPipeline {
                 GetTranslationDebugInfo(entry.Request)
             ))
             .ToArray();
-        return new TranslationFrame(frame.CapturedAt, translatedRegions, debugRegions);
+        var translationFrame = new TranslationFrame(frame.CapturedAt, translatedRegions, debugRegions);
+        lastTranslationFrame = translationFrame;
+        return translationFrame;
+    }
+
+    protected virtual bool ShouldSkipOcr(CapturedFrame frame) {
+        return options.MinOcrFrameChangeRatio > 0
+            && previousFrameSnapshot is not null
+            && CanCompareFrame(frame, previousFrameSnapshot)
+            && GetChangedPixelRatio(frame.PixelData!, previousFrameSnapshot.PixelData) <= options.MinOcrFrameChangeRatio;
+    }
+
+    protected virtual bool CanCompareFrame(CapturedFrame frame, FrameSnapshot snapshot) {
+        return frame.PixelData is { Length: > 0 }
+            && snapshot.PixelData.Length == frame.PixelData.Length
+            && snapshot.SourceId == frame.SourceId
+            && snapshot.Width == frame.Width
+            && snapshot.Height == frame.Height;
+    }
+
+    protected virtual double GetChangedPixelRatio(byte[] currentPixels, byte[] previousPixels) {
+        var pixelCount = currentPixels.Length / 4;
+        if (pixelCount == 0) {
+            return 1;
+        }
+
+        var changedPixels = 0;
+        for (var index = 0; index + 3 < currentPixels.Length; index += 4) {
+            if (currentPixels[index] != previousPixels[index]
+                || currentPixels[index + 1] != previousPixels[index + 1]
+                || currentPixels[index + 2] != previousPixels[index + 2]
+                || currentPixels[index + 3] != previousPixels[index + 3]) {
+                changedPixels++;
+            }
+        }
+
+        return (double)changedPixels / pixelCount;
+    }
+
+    protected virtual void UpdatePreviousFrameSnapshot(CapturedFrame frame) {
+        previousFrameSnapshot = frame.PixelData is { Length: > 0 } pixelData
+            ? new FrameSnapshot(frame.SourceId, frame.Width, frame.Height, pixelData.ToArray())
+            : null;
+    }
+
+    protected virtual TranslationFrame CreateSkippedFrame(CapturedFrame frame) {
+        return lastTranslationFrame is null
+            ? new TranslationFrame(frame.CapturedAt, Array.Empty<TranslatedRegion>())
+            : lastTranslationFrame with { CapturedAt = frame.CapturedAt };
     }
 
     protected virtual async Task TranslateAndApplyBatchAsync(
@@ -620,6 +676,8 @@ public class RealtimeTranslationPipeline {
         public TextRegion Region { get; set; } = region;
         public long LastSeenFrame { get; set; } = lastSeenFrame;
     }
+
+    protected record FrameSnapshot(string SourceId, int Width, int Height, byte[] PixelData);
 }
 
 public record RealtimeTranslationPipelineOptions(
@@ -639,7 +697,8 @@ public record RealtimeTranslationPipelineOptions(
     int StableRegionRetentionFrames,
     int MaxStableTextDistance,
     double MaxStableTextDistanceRatio,
-    double StableRegionSmoothingRatio
+    double StableRegionSmoothingRatio,
+    double MinOcrFrameChangeRatio = 0.1
 ) {
     public const string LowLatencyPreset = "LowLatency";
     public const string BalancedPreset = "Balanced";

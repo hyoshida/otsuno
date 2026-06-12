@@ -67,6 +67,52 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceSkipsOcrWhenFrameChangeRatioIsBelowThreshold() {
+        var frames = new[] {
+            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow, [0, 0, 0, 255]),
+            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow.AddMilliseconds(100), [0, 0, 0, 255]),
+        };
+        var ocr = new CountingOcrEngine([
+            new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+        ]);
+        var pipeline = new RealtimeTranslationPipeline(
+            new SequenceCaptureService(frames),
+            ocr,
+            new CountingTranslationService(),
+            new InMemoryTranslationCache()
+        );
+
+        var first = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Equal(1, ocr.CallCount);
+        Assert.Equal(first.Regions, second.Regions);
+        Assert.Equal(frames[1].CapturedAt, second.CapturedAt);
+    }
+
+    [Fact]
+    public async Task ProcessOnceRunsOcrWhenFrameChangeRatioExceedsThreshold() {
+        var frames = new[] {
+            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow, [0, 0, 0, 255]),
+            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow.AddMilliseconds(100), [255, 0, 0, 255]),
+        };
+        var ocr = new CountingOcrEngine([
+            new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+        ]);
+        var pipeline = new RealtimeTranslationPipeline(
+            new SequenceCaptureService(frames),
+            ocr,
+            new CountingTranslationService(),
+            new InMemoryTranslationCache()
+        );
+
+        await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Equal(2, ocr.CallCount);
+    }
+
+    [Fact]
     public async Task ProcessOnceStabilizesNearbyRegionPositionAndText() {
         var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
         var ocr = new SequenceOcrEngine([
@@ -410,8 +456,27 @@ public class RealtimeTranslationPipelineTests {
         }
     }
 
+    protected class SequenceCaptureService(IReadOnlyList<CapturedFrame> frames) : IScreenCaptureService {
+        protected int index;
+
+        public Task<CapturedFrame?> CaptureAsync(CancellationToken cancellationToken) {
+            var frame = frames[Math.Min(index, frames.Count - 1)];
+            index++;
+            return Task.FromResult<CapturedFrame?>(frame);
+        }
+    }
+
     protected class StubOcrEngine(IReadOnlyList<TextRegion> regions) : IOcrEngine {
         public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            return Task.FromResult(regions);
+        }
+    }
+
+    protected class CountingOcrEngine(IReadOnlyList<TextRegion> regions) : IOcrEngine {
+        public int CallCount { get; protected set; }
+
+        public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            CallCount++;
             return Task.FromResult(regions);
         }
     }
