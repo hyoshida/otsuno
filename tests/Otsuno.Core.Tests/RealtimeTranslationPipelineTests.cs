@@ -92,17 +92,22 @@ public class RealtimeTranslationPipelineTests {
 
     [Fact]
     public async Task ProcessOnceRunsFullFrameOcrAfterChangedFrameRegionDetectsText() {
-        var previousPixels = new byte[2 * 2 * 4];
+        var previousPixels = new byte[10 * 10 * 4];
         var currentPixels = previousPixels.ToArray();
-        currentPixels[(1 * 2 + 1) * 4] = 255;
+        SetPixels(currentPixels, 10, [
+            (5, 5),
+            (6, 5),
+            (5, 6),
+            (6, 6),
+        ], 255);
         var frames = new[] {
-            new CapturedFrame("test", 2, 2, DateTimeOffset.UtcNow, previousPixels),
-            new CapturedFrame("test", 2, 2, DateTimeOffset.UtcNow.AddMilliseconds(100), currentPixels),
+            new CapturedFrame("test", 10, 10, DateTimeOffset.UtcNow, previousPixels),
+            new CapturedFrame("test", 10, 10, DateTimeOffset.UtcNow.AddMilliseconds(100), currentPixels),
         };
         var ocr = new SequenceCountingOcrEngine([
             [],
             [
-                new TextRegion("changed", "S", new ScreenRect(0, 0, 1, 1), 0.9),
+                new TextRegion("changed", "S", new ScreenRect(4, 4, 2, 2), 0.9),
             ],
             [
                 new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
@@ -113,7 +118,7 @@ public class RealtimeTranslationPipelineTests {
             ocr,
             new CountingTranslationService(),
             new InMemoryTranslationCache(),
-            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
+            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 4 }
         );
         var detectedRegions = new List<TextRegion>();
         pipeline.ChangedFrameTextDetected += (_, e) => detectedRegions.AddRange(e.Regions);
@@ -122,10 +127,10 @@ public class RealtimeTranslationPipelineTests {
         var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
 
         Assert.Equal(3, ocr.CallCount);
-        Assert.Equal(1, ocr.Frames[1].Width);
-        Assert.Equal(1, ocr.Frames[1].Height);
-        Assert.Equal(2, ocr.Frames[2].Width);
-        Assert.Equal(2, ocr.Frames[2].Height);
+        Assert.Equal(9, ocr.Frames[1].Width);
+        Assert.Equal(9, ocr.Frames[1].Height);
+        Assert.Equal(10, ocr.Frames[2].Width);
+        Assert.Equal(10, ocr.Frames[2].Height);
         Assert.Equal("S", Assert.Single(detectedRegions).Text);
         Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
     }
@@ -147,7 +152,9 @@ public class RealtimeTranslationPipelineTests {
             [
                 new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
             ],
-            [],
+            [
+                new TextRegion("edge", "|", new ScreenRect(0, 0, 1, 3), 0.9),
+            ],
         ]);
         var pipeline = new RealtimeTranslationPipeline(
             new SequenceCaptureService(frames),
@@ -507,6 +514,12 @@ public class RealtimeTranslationPipelineTests {
         }
 
         return await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+    }
+
+    protected static void SetPixels(byte[] pixels, int width, IReadOnlyList<(int X, int Y)> coordinates, byte blue) {
+        foreach (var (x, y) in coordinates) {
+            pixels[(y * width + x) * 4] = blue;
+        }
     }
 
     protected class StubCaptureService(CapturedFrame? frame) : IScreenCaptureService {
