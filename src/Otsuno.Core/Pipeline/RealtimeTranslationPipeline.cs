@@ -7,6 +7,9 @@ using System.Text.RegularExpressions;
 namespace Otsuno.Core.Pipeline;
 
 public class RealtimeTranslationPipeline {
+    protected const int StableBoundsSnapThreshold = 8;
+    protected const double SameLineVerticalOverlapRatio = 0.55;
+
     protected readonly IScreenCaptureService captureService;
     protected readonly IOcrEngine ocrEngine;
     protected readonly ITranslationService translationService;
@@ -266,11 +269,19 @@ public class RealtimeTranslationPipeline {
 
     protected virtual ScreenRect MergeStableBounds(ScreenRect stableBounds, ScreenRect currentBounds) {
         return new ScreenRect(
-            WeightedAverage(stableBounds.X, currentBounds.X, options.StableRegionSmoothingRatio),
-            WeightedAverage(stableBounds.Y, currentBounds.Y, options.StableRegionSmoothingRatio),
-            WeightedAverage(stableBounds.Width, currentBounds.Width, options.StableRegionSmoothingRatio),
-            WeightedAverage(stableBounds.Height, currentBounds.Height, options.StableRegionSmoothingRatio)
+            MergeStableBoundsValue(stableBounds.X, currentBounds.X),
+            MergeStableBoundsValue(stableBounds.Y, currentBounds.Y),
+            MergeStableBoundsValue(stableBounds.Width, currentBounds.Width),
+            MergeStableBoundsValue(stableBounds.Height, currentBounds.Height)
         );
+    }
+
+    protected virtual int MergeStableBoundsValue(int stableValue, int currentValue) {
+        if (Math.Abs(stableValue - currentValue) <= StableBoundsSnapThreshold) {
+            return stableValue;
+        }
+
+        return WeightedAverage(stableValue, currentValue, options.StableRegionSmoothingRatio);
     }
 
     protected virtual int WeightedAverage(int stableValue, int currentValue, double currentRatio) {
@@ -342,9 +353,30 @@ public class RealtimeTranslationPipeline {
         var averageHeight = block.Average(item => item.Bounds.Height);
         var allowedGap = Math.Max(options.MaxTextBlockLineGap, averageHeight * options.MaxTextBlockLineGapRatio);
 
+        return IsNextLineInBlock(region.Bounds, bounds, verticalGap, allowedGap)
+            || IsSameLineContinuation(region.Bounds, bounds);
+    }
+
+    protected virtual bool IsNextLineInBlock(ScreenRect region, ScreenRect bounds, int verticalGap, double allowedGap) {
         return verticalGap >= 0
             && verticalGap <= allowedGap
-            && HasHorizontalRelationship(region.Bounds, bounds);
+            && HasHorizontalRelationship(region, bounds);
+    }
+
+    protected virtual bool IsSameLineContinuation(ScreenRect region, ScreenRect bounds) {
+        var horizontalGap = region.X - (bounds.X + bounds.Width);
+        var allowedGap = Math.Min(options.MaxTextBlockIndent, options.MaxTextBlockLineGap);
+        return horizontalGap >= 0
+            && horizontalGap <= allowedGap
+            && HasVerticalOverlap(region, bounds);
+    }
+
+    protected virtual bool HasVerticalOverlap(ScreenRect first, ScreenRect second) {
+        var top = Math.Max(first.Y, second.Y);
+        var bottom = Math.Min(first.Y + first.Height, second.Y + second.Height);
+        var overlap = Math.Max(0, bottom - top);
+        var minimumHeight = Math.Min(first.Height, second.Height);
+        return minimumHeight > 0 && overlap >= minimumHeight * SameLineVerticalOverlapRatio;
     }
 
     protected virtual bool HasHorizontalRelationship(ScreenRect first, ScreenRect second) {
@@ -374,10 +406,27 @@ public class RealtimeTranslationPipeline {
             .ThenBy(region => region.Bounds.X)
             .ToArray();
         var id = string.Join("+", orderedLines.Select(region => region.Id));
-        var text = string.Join(Environment.NewLine, orderedLines.Select(region => region.Text.Trim()));
+        var text = CreateTextBlockText(orderedLines);
         var bounds = GetBounds(orderedLines);
         var confidence = orderedLines.Average(region => region.Confidence);
         return new TextRegion(id, text, bounds, confidence);
+    }
+
+    protected virtual string CreateTextBlockText(IReadOnlyList<TextRegion> orderedRegions) {
+        var lines = new List<List<TextRegion>>();
+        foreach (var region in orderedRegions) {
+            var line = lines.FirstOrDefault(line => HasVerticalOverlap(region.Bounds, GetBounds(line)));
+            if (line is null) {
+                lines.Add([region]);
+            } else {
+                line.Add(region);
+            }
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            lines.Select(line => string.Join(" ", line.OrderBy(region => region.Bounds.X).Select(region => region.Text.Trim())))
+        );
     }
 
     protected virtual ScreenRect GetBounds(IReadOnlyList<TextRegion> regions) {
