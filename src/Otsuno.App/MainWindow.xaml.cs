@@ -86,6 +86,7 @@ public partial class MainWindow : Window {
             sourceLanguage
         );
         translationPipeline.ChangedFrameTextDetected += RealtimeTranslationPipeline_ChangedFrameTextDetected;
+        translationPipeline.TranslationFrameUpdated += RealtimeTranslationPipeline_TranslationFrameUpdated;
         return translationPipeline;
     }
 
@@ -123,6 +124,18 @@ public partial class MainWindow : Window {
 
     protected virtual void RealtimeTranslationPipeline_ChangedFrameTextDetected(object? sender, ChangedFrameTextDetectedEventArgs e) {
         Dispatcher.InvokeAsync(() => AppendChangedFrameTextLog(e.Regions));
+    }
+
+    protected virtual void RealtimeTranslationPipeline_TranslationFrameUpdated(object? sender, TranslationFrameUpdatedEventArgs e) {
+        Dispatcher.InvokeAsync(() => {
+            if (!isRunning) {
+                return;
+            }
+
+            RenderFrame(e.Frame);
+            UpdateOcrStatus();
+            SetStatus($"Updated overlay with {e.Frame.Regions.Count} translated regions.", "Pipeline");
+        });
     }
 
     protected virtual void AppendChangedFrameTextLog(IReadOnlyList<TextRegion> regions) {
@@ -275,6 +288,7 @@ public partial class MainWindow : Window {
         }
 
         pipeline.ChangedFrameTextDetected -= RealtimeTranslationPipeline_ChangedFrameTextDetected;
+        pipeline.TranslationFrameUpdated -= RealtimeTranslationPipeline_TranslationFrameUpdated;
         pipeline = null;
     }
 

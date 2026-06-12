@@ -21,13 +21,16 @@ public class RealtimeTranslationPipeline {
     protected readonly RealtimeTranslationPipelineOptions options;
     protected readonly string sourceLanguage;
     protected readonly ConcurrentDictionary<string, byte> pendingTranslations = new(StringComparer.Ordinal);
+    protected readonly ConcurrentDictionary<string, PendingTranslationEntry> pendingTranslationEntries = new(StringComparer.Ordinal);
     protected readonly ConcurrentDictionary<string, TimeSpan> translationDurations = new(StringComparer.Ordinal);
     protected readonly List<StableTextRegion> stableRegions = [];
+    protected readonly object frameLock = new();
     protected FrameSnapshot? previousFrameSnapshot;
     protected TranslationFrame? lastTranslationFrame;
     protected long frameIndex;
 
     public event EventHandler<ChangedFrameTextDetectedEventArgs>? ChangedFrameTextDetected;
+    public event EventHandler<TranslationFrameUpdatedEventArgs>? TranslationFrameUpdated;
 
     public RealtimeTranslationPipeline(
         IScreenCaptureService captureService,
@@ -100,7 +103,7 @@ public class RealtimeTranslationPipeline {
         foreach (var region in selectedRegions) {
             var request = CreateTranslationRequest(region, targetLanguage);
             if (translationCache.TryGet(request, out var cached)) {
-                entries.Add(new TranslationEntry(region, request, cached));
+                entries.Add(new TranslationEntry(region, request, cached, ocrStopwatch.Elapsed));
                 continue;
             }
 
@@ -108,7 +111,7 @@ public class RealtimeTranslationPipeline {
                 continue;
             }
 
-            entries.Add(new TranslationEntry(region, request, null));
+            entries.Add(new TranslationEntry(region, request, null, ocrStopwatch.Elapsed, DateTimeOffset.UtcNow));
             uncachedRequests.Add(request);
         }
 
@@ -116,13 +119,13 @@ public class RealtimeTranslationPipeline {
             if (options.AwaitUncachedTranslations) {
                 await TranslateAndApplyBatchAsync(entries, uncachedRequests, cancellationToken).ConfigureAwait(false);
             } else {
-                QueueTranslationBatch(uncachedRequests);
+                QueueTranslationBatch(entries.Where(entry => entry.Translation is null).ToArray());
             }
         }
 
         var translatedRegions = entries
             .Where(entry => entry.Translation is not null)
-            .Select(entry => CreateTranslatedRegion(entry.Region, entry.Translation!))
+            .Select(entry => CreateTranslatedRegion(entry.Region, entry.Translation!, entry.TranslationQueuedAt))
             .ToArray();
         var debugRegions = entries
             .Where(entry => entry.Translation is null)
@@ -131,11 +134,12 @@ public class RealtimeTranslationPipeline {
                 entry.Region.Bounds,
                 entry.Region.Text,
                 ocrStopwatch.Elapsed,
-                GetTranslationDebugInfo(entry.Request)
+                GetTranslationDebugInfo(entry.Request),
+                entry.TranslationQueuedAt
             ))
             .ToArray();
         var translationFrame = new TranslationFrame(frame.CapturedAt, translatedRegions, debugRegions);
-        lastTranslationFrame = translationFrame;
+        SetLastTranslationFrame(translationFrame);
         return translationFrame;
     }
 
@@ -369,9 +373,10 @@ public class RealtimeTranslationPipeline {
     }
 
     protected virtual TranslationFrame CreateSkippedFrame(CapturedFrame frame) {
-        return lastTranslationFrame is null
+        var lastFrame = GetLastTranslationFrame();
+        return lastFrame is null
             ? new TranslationFrame(frame.CapturedAt, Array.Empty<TranslatedRegion>())
-            : lastTranslationFrame with { CapturedAt = frame.CapturedAt };
+            : lastFrame with { CapturedAt = frame.CapturedAt };
     }
 
     protected virtual async Task TranslateAndApplyBatchAsync(
@@ -391,15 +396,16 @@ public class RealtimeTranslationPipeline {
         }
     }
 
-    protected virtual void QueueTranslationBatch(IReadOnlyList<TranslationRequest> requests) {
+    protected virtual void QueueTranslationBatch(IReadOnlyList<TranslationEntry> entries) {
         var queuedRequests = new List<TranslationRequest>();
         var queuedKeys = new List<string>();
 
-        foreach (var request in requests) {
+        foreach (var entry in entries) {
             if (pendingTranslations.Count >= options.MaxBackgroundTranslations) {
                 break;
             }
 
+            var request = entry.Request;
             var key = BuildPendingKey(request);
             if (!pendingTranslations.TryAdd(key, 0)) {
                 continue;
@@ -407,6 +413,11 @@ public class RealtimeTranslationPipeline {
 
             queuedRequests.Add(request);
             queuedKeys.Add(key);
+            pendingTranslationEntries[key] = new PendingTranslationEntry(
+                entry.Region,
+                request,
+                entry.TranslationQueuedAt ?? DateTimeOffset.UtcNow
+            );
         }
 
         if (queuedRequests.Count == 0) {
@@ -422,12 +433,69 @@ public class RealtimeTranslationPipeline {
             var translations = await TranslateBatchAsync(requests, CancellationToken.None).ConfigureAwait(false);
             stopwatch.Stop();
             StoreTranslations(requests, translations, stopwatch.Elapsed);
+            ApplyCompletedBackgroundTranslations(keys, translations);
         } catch {
             // Background translation failures are retried by future frames.
         } finally {
             foreach (var key in keys) {
                 pendingTranslations.TryRemove(key, out _);
+                pendingTranslationEntries.TryRemove(key, out _);
             }
+        }
+    }
+
+    protected virtual void ApplyCompletedBackgroundTranslations(
+        IReadOnlyList<string> keys,
+        IReadOnlyList<TranslationResponse> translations) {
+        var translationsByKey = translations.ToDictionary(BuildPendingKey, StringComparer.Ordinal);
+        var completedRegions = new List<TranslatedRegion>();
+        foreach (var key in keys) {
+            if (!pendingTranslationEntries.TryGetValue(key, out var pendingEntry)
+                || !translationsByKey.TryGetValue(key, out var translation)) {
+                continue;
+            }
+
+            completedRegions.Add(CreateTranslatedRegion(
+                pendingEntry.Region,
+                translation,
+                pendingEntry.QueuedAt
+            ));
+        }
+
+        if (completedRegions.Count == 0) {
+            return;
+        }
+
+        var updatedFrame = ApplyCompletedRegionsToLastFrame(completedRegions, DateTimeOffset.UtcNow);
+        if (updatedFrame is not null) {
+            TranslationFrameUpdated?.Invoke(this, new TranslationFrameUpdatedEventArgs(updatedFrame));
+        }
+    }
+
+    protected virtual TranslationFrame? ApplyCompletedRegionsToLastFrame(
+        IReadOnlyList<TranslatedRegion> completedRegions,
+        DateTimeOffset completedAt) {
+        lock (frameLock) {
+            if (lastTranslationFrame is null) {
+                return null;
+            }
+
+            var completedIds = completedRegions.Select(region => region.RegionId).ToHashSet(StringComparer.Ordinal);
+            var regions = lastTranslationFrame.Regions
+                .Where(region => !completedIds.Contains(region.RegionId))
+                .Concat(completedRegions)
+                .OrderBy(region => region.Bounds.Y)
+                .ThenBy(region => region.Bounds.X)
+                .ToArray();
+            var debugRegions = lastTranslationFrame.DebugRegions?
+                .Where(region => !completedIds.Contains(region.RegionId))
+                .ToArray();
+            lastTranslationFrame = lastTranslationFrame with {
+                CapturedAt = completedAt,
+                Regions = regions,
+                DebugRegions = debugRegions
+            };
+            return lastTranslationFrame;
         }
     }
 
@@ -832,7 +900,10 @@ public class RealtimeTranslationPipeline {
         return normalized;
     }
 
-    protected virtual TranslatedRegion CreateTranslatedRegion(TextRegion region, TranslationResponse translation) {
+    protected virtual TranslatedRegion CreateTranslatedRegion(
+        TextRegion region,
+        TranslationResponse translation,
+        DateTimeOffset? translationQueuedAt = null) {
         return new TranslatedRegion(
             region.Id,
             region.Bounds,
@@ -841,8 +912,13 @@ public class RealtimeTranslationPipeline {
             region.Confidence,
             translation.FromCache,
             GetTranslationDuration(translation),
-            GetTranslationDebugInfo(translation)
+            GetTranslationDebugInfo(translation),
+            GetTranslationWaitDuration(translationQueuedAt)
         );
+    }
+
+    protected virtual TimeSpan? GetTranslationWaitDuration(DateTimeOffset? translationQueuedAt) {
+        return translationQueuedAt is null ? null : DateTimeOffset.UtcNow - translationQueuedAt.Value;
     }
 
     protected virtual TimeSpan? GetTranslationDuration(TranslationResponse translation) {
@@ -860,11 +936,32 @@ public class RealtimeTranslationPipeline {
                 : null;
     }
 
-    protected class TranslationEntry(TextRegion region, TranslationRequest request, TranslationResponse? translation) {
+    protected virtual void SetLastTranslationFrame(TranslationFrame frame) {
+        lock (frameLock) {
+            lastTranslationFrame = frame;
+        }
+    }
+
+    protected virtual TranslationFrame? GetLastTranslationFrame() {
+        lock (frameLock) {
+            return lastTranslationFrame;
+        }
+    }
+
+    protected class TranslationEntry(
+        TextRegion region,
+        TranslationRequest request,
+        TranslationResponse? translation,
+        TimeSpan ocrDuration,
+        DateTimeOffset? translationQueuedAt = null) {
         public TextRegion Region { get; } = region;
         public TranslationRequest Request { get; } = request;
         public TranslationResponse? Translation { get; set; } = translation;
+        public TimeSpan OcrDuration { get; } = ocrDuration;
+        public DateTimeOffset? TranslationQueuedAt { get; } = translationQueuedAt;
     }
+
+    protected record PendingTranslationEntry(TextRegion Region, TranslationRequest Request, DateTimeOffset QueuedAt);
 
     protected class StableTextRegion(TextRegion region, long lastSeenFrame) {
         public TextRegion Region { get; set; } = region;
@@ -995,4 +1092,8 @@ public record RealtimeTranslationPipelineOptions(
 
 public class ChangedFrameTextDetectedEventArgs(IReadOnlyList<TextRegion> regions) : EventArgs {
     public IReadOnlyList<TextRegion> Regions { get; } = regions;
+}
+
+public class TranslationFrameUpdatedEventArgs(TranslationFrame frame) : EventArgs {
+    public TranslationFrame Frame { get; } = frame;
 }

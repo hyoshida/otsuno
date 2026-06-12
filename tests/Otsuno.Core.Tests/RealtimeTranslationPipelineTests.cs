@@ -408,6 +408,8 @@ public class RealtimeTranslationPipelineTests {
             new InMemoryTranslationCache(),
             RealtimeTranslationPipelineOptions.LowLatency
         );
+        var updatedFrameSource = new TaskCompletionSource<TranslationFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pipeline.TranslationFrameUpdated += (_, e) => updatedFrameSource.TrySetResult(e.Frame);
         var stopwatch = Stopwatch.StartNew();
 
         var first = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
@@ -420,14 +422,13 @@ public class RealtimeTranslationPipelineTests {
         Assert.True(stopwatch.ElapsedMilliseconds < 500);
 
         translator.Complete();
-        await translator.Completed.Task;
+        var updatedFrame = await updatedFrameSource.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var second = await ProcessUntilRegionAsync(pipeline);
-
-        var region = Assert.Single(second.Regions);
-        Assert.True(region.FromCache);
+        var region = Assert.Single(updatedFrame.Regions);
+        Assert.False(region.FromCache);
         Assert.Equal("ja:Start", region.TranslatedText);
         Assert.NotNull(region.TranslationDuration);
+        Assert.NotNull(region.TranslationWaitDuration);
     }
 
     [Fact]

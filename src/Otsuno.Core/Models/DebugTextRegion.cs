@@ -5,5 +5,6 @@ public record DebugTextRegion(
     ScreenRect Bounds,
     string SourceText,
     TimeSpan OcrDuration,
-    TranslationDebugInfo? TranslationDebugInfo = null
+    TranslationDebugInfo? TranslationDebugInfo = null,
+    DateTimeOffset? TranslationQueuedAt = null
 );

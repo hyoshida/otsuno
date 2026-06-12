@@ -104,6 +104,7 @@ public partial class OverlayWindow : Window {
             " | ",
             new[] {
                 region.TranslationDuration is null ? null : $"TR {FormatDuration(region.TranslationDuration.Value)}",
+                region.TranslationWaitDuration is null ? null : $"Wait {FormatDuration(region.TranslationWaitDuration.Value)}",
                 CreateOllamaRequestCountText(region.TranslationDebugInfo)
             }.Where(text => !string.IsNullOrWhiteSpace(text))
         );
@@ -120,9 +121,19 @@ public partial class OverlayWindow : Window {
             " | ",
             new[] {
                 $"OCR {FormatDuration(region.OcrDuration)}",
+                CreateTranslationPendingText(region.TranslationQueuedAt),
                 CreateOllamaRequestCountText(region.TranslationDebugInfo)
             }.Where(text => !string.IsNullOrWhiteSpace(text))
         );
+    }
+
+    protected virtual string? CreateTranslationPendingText(DateTimeOffset? queuedAt) {
+        if (queuedAt is null) {
+            return null;
+        }
+
+        var duration = DateTimeOffset.UtcNow - queuedAt.Value;
+        return $"Pending {FormatDuration(duration)}";
     }
 
     protected virtual string CreateDebugBodyText(DebugTextRegion region) {
