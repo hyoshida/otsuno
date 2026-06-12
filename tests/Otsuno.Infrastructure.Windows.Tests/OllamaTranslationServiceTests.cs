@@ -272,6 +272,51 @@ public class OllamaTranslationServiceTests {
     }
 
     [Fact]
+    public async Task TranslateBatchAsyncReturnsAcceptedResponsesWhenSomeTextsRemainInvalid() {
+        var handler = new StubHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new {
+                    response = JsonSerializer.Serialize(new {
+                        translations = new[] {
+                            new { id = "t0", translatedText = "How many times this month?" },
+                            new { id = "t1", translatedText = "またですか？" },
+                        }
+                    })
+                })
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new {
+                    response = JsonSerializer.Serialize(new {
+                        translations = new[] {
+                            new { id = "t0", translatedText = "またですか？" },
+                        }
+                    })
+                })
+            }
+        );
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var requests = new[] {
+            new TranslationRequest("今月に入って何回目ですか？", "ja", "en"),
+            new TranslationRequest("またですか？", "ja", "en"),
+        };
+
+        var responses = await service.TranslateBatchAsync(requests, CancellationToken.None);
+
+        var response = Assert.Single(responses);
+        Assert.Equal("今月に入って何回目ですか？", response.SourceText);
+        Assert.Equal("How many times this month?", response.TranslatedText);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.True(service.TryGetDebugInfo(requests[1], out var debugInfo));
+        Assert.Equal(2, debugInfo.RequestCount);
+        Assert.Equal("またですか？", debugInfo.LastResponseText);
+    }
+
+    [Fact]
     public async Task TranslateAsyncThrowsForUnsuccessfulResponse() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
         using var httpClient = new HttpClient(handler);

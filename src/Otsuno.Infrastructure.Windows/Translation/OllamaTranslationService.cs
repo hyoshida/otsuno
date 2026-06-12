@@ -40,22 +40,36 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
     public virtual async Task<IReadOnlyList<TranslationResponse>> TranslateBatchAsync(IReadOnlyList<TranslationRequest> requests, CancellationToken cancellationToken) {
         await runtimeManager.EnsureReadyAsync(options, cancellationToken).ConfigureAwait(false);
 
+        var acceptedResponses = new Dictionary<string, TranslationResponse>(StringComparer.Ordinal);
+        var pendingRequests = requests;
         for (var attempt = 0; attempt < MaxTranslationAttempts; attempt++) {
             IReadOnlyList<string> translatedTexts;
             try {
-                translatedTexts = await GenerateTranslatedTextsAsync(requests, cancellationToken).ConfigureAwait(false);
+                translatedTexts = await GenerateTranslatedTextsAsync(pendingRequests, cancellationToken).ConfigureAwait(false);
             } catch (Exception ex) {
-                RecordDebugInfo(requests, null, ex.Message);
+                RecordDebugInfo(pendingRequests, null, ex.Message);
                 throw;
             }
 
-            var responses = requests
+            var responses = pendingRequests
                 .Select((request, index) => CreateTranslationResponse(request, translatedTexts[index]))
                 .ToArray();
             RecordDebugInfo(responses);
-            if (responses.All(response => !ShouldRetryTranslation(response))) {
-                return responses;
+            foreach (var response in responses.Where(response => !ShouldRetryTranslation(response))) {
+                acceptedResponses[GetDebugInfoKey(response)] = response;
             }
+
+            pendingRequests = responses
+                .Where(ShouldRetryTranslation)
+                .Select(response => new TranslationRequest(response.SourceText, response.SourceLanguage, response.TargetLanguage))
+                .ToArray();
+            if (pendingRequests.Count == 0) {
+                return GetAcceptedResponsesInRequestOrder(requests, acceptedResponses);
+            }
+        }
+
+        if (acceptedResponses.Count > 0) {
+            return GetAcceptedResponsesInRequestOrder(requests, acceptedResponses);
         }
 
         throw new InvalidOperationException("Ollama returned untranslated or wrong-language text.");
@@ -124,6 +138,20 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
             request.TargetLanguage,
             request.Context
         );
+    }
+
+    protected virtual string GetDebugInfoKey(TranslationResponse response) {
+        return GetDebugInfoKey(new TranslationRequest(response.SourceText, response.SourceLanguage, response.TargetLanguage));
+    }
+
+    protected virtual IReadOnlyList<TranslationResponse> GetAcceptedResponsesInRequestOrder(
+        IReadOnlyList<TranslationRequest> requests,
+        IReadOnlyDictionary<string, TranslationResponse> acceptedResponses) {
+        return requests
+            .Select(GetDebugInfoKey)
+            .Where(acceptedResponses.ContainsKey)
+            .Select(key => acceptedResponses[key])
+            .ToArray();
     }
 
     protected virtual string CreatePrompt(IReadOnlyList<TranslationRequest> requests) {
