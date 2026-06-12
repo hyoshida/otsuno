@@ -46,56 +46,119 @@ public class RealtimeTranslationPipeline {
         }
 
         var textRegions = await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
-        var translatedRegions = new List<TranslatedRegion>(textRegions.Count);
-        var uncachedTranslations = 0;
+        var entries = new List<TranslationEntry>();
+        var uncachedRequests = new List<TranslationRequest>();
 
         foreach (var region in SelectTextRegions(textRegions)) {
             var request = CreateTranslationRequest(region, targetLanguage);
             if (translationCache.TryGet(request, out var cached)) {
-                translatedRegions.Add(CreateTranslatedRegion(region, cached));
+                entries.Add(new TranslationEntry(region, request, cached));
                 continue;
             }
 
-            if (uncachedTranslations >= options.MaxUncachedTranslationsPerFrame) {
+            if (uncachedRequests.Count >= options.MaxUncachedTranslationsPerFrame) {
                 continue;
             }
 
-            if (options.AwaitUncachedTranslations) {
-                var translated = await translationService.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
-                translationCache.Store(request, translated);
-                translatedRegions.Add(CreateTranslatedRegion(region, translated));
-            } else {
-                QueueTranslation(request);
-            }
-
-            uncachedTranslations++;
+            entries.Add(new TranslationEntry(region, request, null));
+            uncachedRequests.Add(request);
         }
 
+        if (uncachedRequests.Count > 0) {
+            if (options.AwaitUncachedTranslations) {
+                await TranslateAndApplyBatchAsync(entries, uncachedRequests, cancellationToken).ConfigureAwait(false);
+            } else {
+                QueueTranslationBatch(uncachedRequests);
+            }
+        }
+
+        var translatedRegions = entries
+            .Where(entry => entry.Translation is not null)
+            .Select(entry => CreateTranslatedRegion(entry.Region, entry.Translation!))
+            .ToArray();
         return new TranslationFrame(frame.CapturedAt, translatedRegions);
     }
 
-    protected virtual void QueueTranslation(TranslationRequest request) {
-        if (pendingTranslations.Count >= options.MaxBackgroundTranslations) {
-            return;
-        }
+    protected virtual async Task TranslateAndApplyBatchAsync(
+        IReadOnlyList<TranslationEntry> entries,
+        IReadOnlyList<TranslationRequest> requests,
+        CancellationToken cancellationToken) {
+        var translations = await TranslateBatchAsync(requests, cancellationToken).ConfigureAwait(false);
+        StoreTranslations(requests, translations);
 
-        var key = BuildPendingKey(request);
-        if (!pendingTranslations.TryAdd(key, 0)) {
-            return;
+        var translationsByKey = translations.ToDictionary(BuildPendingKey, StringComparer.Ordinal);
+        foreach (var entry in entries.Where(entry => entry.Translation is null)) {
+            if (translationsByKey.TryGetValue(BuildPendingKey(entry.Request), out var translation)) {
+                entry.Translation = translation;
+            }
         }
-
-        _ = TranslateAndStoreAsync(key, request);
     }
 
-    protected virtual async Task TranslateAndStoreAsync(string key, TranslationRequest request) {
+    protected virtual void QueueTranslationBatch(IReadOnlyList<TranslationRequest> requests) {
+        var queuedRequests = new List<TranslationRequest>();
+        var queuedKeys = new List<string>();
+
+        foreach (var request in requests) {
+            if (pendingTranslations.Count >= options.MaxBackgroundTranslations) {
+                break;
+            }
+
+            var key = BuildPendingKey(request);
+            if (!pendingTranslations.TryAdd(key, 0)) {
+                continue;
+            }
+
+            queuedRequests.Add(request);
+            queuedKeys.Add(key);
+        }
+
+        if (queuedRequests.Count == 0) {
+            return;
+        }
+
+        _ = TranslateAndStoreBatchAsync(queuedKeys, queuedRequests);
+    }
+
+    protected virtual async Task TranslateAndStoreBatchAsync(IReadOnlyList<string> keys, IReadOnlyList<TranslationRequest> requests) {
         try {
-            var translated = await translationService.TranslateAsync(request, CancellationToken.None).ConfigureAwait(false);
-            translationCache.Store(request, translated);
+            var translations = await TranslateBatchAsync(requests, CancellationToken.None).ConfigureAwait(false);
+            StoreTranslations(requests, translations);
         } catch {
             // Background translation failures are retried by future frames.
         } finally {
-            pendingTranslations.TryRemove(key, out _);
+            foreach (var key in keys) {
+                pendingTranslations.TryRemove(key, out _);
+            }
         }
+    }
+
+    protected virtual async Task<IReadOnlyList<TranslationResponse>> TranslateBatchAsync(
+        IReadOnlyList<TranslationRequest> requests,
+        CancellationToken cancellationToken) {
+        if (translationService is IBatchTranslationService batchTranslationService) {
+            return await batchTranslationService.TranslateBatchAsync(requests, cancellationToken).ConfigureAwait(false);
+        }
+
+        var translations = new List<TranslationResponse>(requests.Count);
+        foreach (var request in requests) {
+            translations.Add(await translationService.TranslateAsync(request, cancellationToken).ConfigureAwait(false));
+        }
+
+        return translations;
+    }
+
+    protected virtual void StoreTranslations(IReadOnlyList<TranslationRequest> requests, IReadOnlyList<TranslationResponse> translations) {
+        var requestsByKey = requests.ToDictionary(BuildPendingKey, StringComparer.Ordinal);
+        foreach (var translation in translations) {
+            var key = BuildPendingKey(translation);
+            if (requestsByKey.TryGetValue(key, out var request)) {
+                translationCache.Store(request, translation);
+            }
+        }
+    }
+
+    protected virtual string BuildPendingKey(TranslationResponse response) {
+        return BuildPendingKey(new TranslationRequest(response.SourceText, response.SourceLanguage, response.TargetLanguage));
     }
 
     protected virtual string BuildPendingKey(TranslationRequest request) {
@@ -209,6 +272,11 @@ public class RealtimeTranslationPipeline {
         );
     }
 
+    protected class TranslationEntry(TextRegion region, TranslationRequest request, TranslationResponse? translation) {
+        public TextRegion Region { get; } = region;
+        public TranslationRequest Request { get; } = request;
+        public TranslationResponse? Translation { get; set; } = translation;
+    }
 }
 
 public record RealtimeTranslationPipelineOptions(
@@ -242,8 +310,8 @@ public record RealtimeTranslationPipelineOptions(
 
     public static RealtimeTranslationPipelineOptions LowLatency { get; } = new(
         MaxTextRegionsPerFrame: 12,
-        MaxUncachedTranslationsPerFrame: 2,
-        MaxBackgroundTranslations: 1,
+        MaxUncachedTranslationsPerFrame: 6,
+        MaxBackgroundTranslations: 12,
         AwaitUncachedTranslations: false,
         MinTextLength: 2,
         MaxTextLength: 500,

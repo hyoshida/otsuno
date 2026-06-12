@@ -73,6 +73,42 @@ public class OllamaTranslationServiceTests {
     }
 
     [Fact]
+    public async Task TranslateBatchAsyncPostsSingleGenerateRequestForMultipleTexts() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new {
+                response = JsonSerializer.Serialize(new {
+                    translations = new[] {
+                        new { id = "t0", translatedText = "ゲーム開始" },
+                        new { id = "t1", translatedText = "設定" },
+                    }
+                })
+            })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var requests = new[] {
+            new TranslationRequest("Start Game", "auto", "ja"),
+            new TranslationRequest("Settings", "auto", "ja"),
+        };
+
+        var responses = await service.TranslateBatchAsync(requests, CancellationToken.None);
+
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Equal("ゲーム開始", responses[0].TranslatedText);
+        Assert.Equal("設定", responses[1].TranslatedText);
+        var prompt = ReadPrompt(handler.RequestContent);
+        Assert.Contains("\"translations\"", prompt);
+        Assert.Contains("\"id\":\"t0\"", prompt);
+        Assert.Contains("\"text\":\"Start Game\"", prompt);
+        Assert.Contains("\"id\":\"t1\"", prompt);
+        Assert.Contains("\"text\":\"Settings\"", prompt);
+    }
+
+    [Fact]
     public async Task TranslateAsyncThrowsForUnsuccessfulResponse() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
         using var httpClient = new HttpClient(handler);
@@ -90,11 +126,18 @@ public class OllamaTranslationServiceTests {
         return new StringContent(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json");
     }
 
+    protected static string ReadPrompt(string requestContent) {
+        using var document = JsonDocument.Parse(requestContent);
+        return document.RootElement.GetProperty("prompt").GetString() ?? string.Empty;
+    }
+
     protected class StubHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler {
         public Uri? RequestUri { get; protected set; }
         public string RequestContent { get; protected set; } = string.Empty;
+        public int RequestCount { get; protected set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            RequestCount++;
             RequestUri = request.RequestUri;
             RequestContent = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
             return response;

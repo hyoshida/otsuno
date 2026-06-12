@@ -153,6 +153,35 @@ public class RealtimeTranslationPipelineTests {
         Assert.Equal("ja:Start", region.TranslatedText);
     }
 
+    [Fact]
+    public async Task ProcessOnceUsesBatchTranslationForUncachedRegions() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("first", "First", new ScreenRect(10, 10, 60, 20), 0.9),
+            new TextRegion("second", "Second", new ScreenRect(10, 80, 70, 20), 0.9),
+            new TextRegion("third", "Third", new ScreenRect(10, 150, 60, 20), 0.9),
+        };
+        var translator = new BatchCountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            translator,
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Equal(3, frame.Regions.Count);
+        Assert.Equal(1, translator.BatchCallCount);
+        Assert.Equal(0, translator.SingleCallCount);
+        Assert.Collection(
+            translator.LastBatch,
+            request => Assert.Equal("First", request.SourceText),
+            request => Assert.Equal("Second", request.SourceText),
+            request => Assert.Equal("Third", request.SourceText)
+        );
+    }
+
     protected class StubCaptureService(CapturedFrame? frame) : IScreenCaptureService {
         public Task<CapturedFrame?> CaptureAsync(CancellationToken cancellationToken) {
             return Task.FromResult(frame);
@@ -172,6 +201,27 @@ public class RealtimeTranslationPipelineTests {
             CallCount++;
             var response = new TranslationResponse(request.SourceText, $"{request.TargetLanguage}:{request.SourceText}", request.SourceLanguage, request.TargetLanguage, FromCache: false);
             return Task.FromResult(response);
+        }
+    }
+
+    protected class BatchCountingTranslationService : IBatchTranslationService {
+        public int BatchCallCount { get; protected set; }
+        public int SingleCallCount { get; protected set; }
+        public IReadOnlyList<TranslationRequest> LastBatch { get; protected set; } = [];
+
+        public Task<TranslationResponse> TranslateAsync(TranslationRequest request, CancellationToken cancellationToken) {
+            SingleCallCount++;
+            var response = new TranslationResponse(request.SourceText, $"{request.TargetLanguage}:{request.SourceText}", request.SourceLanguage, request.TargetLanguage, FromCache: false);
+            return Task.FromResult(response);
+        }
+
+        public Task<IReadOnlyList<TranslationResponse>> TranslateBatchAsync(IReadOnlyList<TranslationRequest> requests, CancellationToken cancellationToken) {
+            BatchCallCount++;
+            LastBatch = requests;
+            var responses = requests
+                .Select(request => new TranslationResponse(request.SourceText, $"{request.TargetLanguage}:{request.SourceText}", request.SourceLanguage, request.TargetLanguage, FromCache: false))
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<TranslationResponse>>(responses);
         }
     }
 
