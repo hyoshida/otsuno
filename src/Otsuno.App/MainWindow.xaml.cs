@@ -32,6 +32,8 @@ public partial class MainWindow : Window {
         ollamaRuntimeManager = CreateOllamaRuntimeManager();
         overlayWindow = new OverlayWindow();
         timer = CreateTimer();
+        TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
+        UpdateTranslationFrequency();
     }
 
     protected virtual OllamaRuntimeManager CreateOllamaRuntimeManager() {
@@ -56,10 +58,20 @@ public partial class MainWindow : Window {
 
     protected virtual DispatcherTimer CreateTimer() {
         var dispatcherTimer = new DispatcherTimer {
-            Interval = TimeSpan.FromMilliseconds(750),
+            Interval = TimeSpan.FromMilliseconds(750)
         };
         dispatcherTimer.Tick += Timer_Tick;
         return dispatcherTimer;
+    }
+
+    protected virtual void TranslationFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
+        UpdateTranslationFrequency();
+    }
+
+    protected virtual void UpdateTranslationFrequency() {
+        var frequency = Math.Max(TranslationFrequencySlider.Value, 0.01);
+        timer.Interval = TimeSpan.FromMilliseconds(1_000 / frequency);
+        TranslationFrequencyText.Text = $"{frequency:0.##}/s";
     }
 
     protected virtual async void Timer_Tick(object? sender, EventArgs e) {

@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Otsuno" Height="640" Width="980" MinHeight="520" MinWidth="820"
+        Title="Otsuno" Height="640" Width="1100" MinHeight="520" MinWidth="900"
         Background="#10131A">
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -19,7 +19,7 @@
                 <TextBlock Text="Automatic local game-screen translation foundation" Foreground="#A9B4C4" FontSize="13" />
             </StackPanel>
 
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+            <WrapPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="Model" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="TranslationModelCombo" Width="138" SelectedIndex="0" Margin="0,0,12,0">
                     <ComboBoxItem Content="qwen2.5:1.5b" />
@@ -33,9 +33,25 @@
                     <ComboBoxItem Content="zh-Hans" />
                     <ComboBoxItem Content="zh-Hant" />
                 </ComboBox>
+                <TextBlock Text="Frequency" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Slider x:Name="TranslationFrequencySlider"
+                        Width="130"
+                        Minimum="0.25"
+                        Maximum="4"
+                        Value="1.33"
+                        TickFrequency="0.25"
+                        IsSnapToTickEnabled="True"
+                        VerticalAlignment="Center"
+                        Margin="0,0,8,0" />
+                <TextBlock x:Name="TranslationFrequencyText"
+                           Width="54"
+                           Text="1.3/s"
+                           Foreground="#D7DEE9"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0" />
                 <Button x:Name="StartButton" Content="Start" Width="96" Click="StartButton_Click" Margin="0,0,8,0" />
                 <Button x:Name="StopButton" Content="Stop" Width="96" Click="StopButton_Click" IsEnabled="False" />
-            </StackPanel>
+            </WrapPanel>
         </DockPanel>
 
         <Border Grid.Row="1" Background="#171B24" BorderBrush="#293143" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,18,0,14">
