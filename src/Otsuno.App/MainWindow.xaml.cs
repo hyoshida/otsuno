@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net.Http;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window {
     );
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
+    protected WindowState lastRestorableWindowState = WindowState.Normal;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
     protected PaddleOcrEngine? paddleOcrEngine;
     protected IOcrEngine? ocrEngine;
@@ -66,6 +68,7 @@ public partial class MainWindow : Window {
         TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
         DebugModeCheckBox.Checked += DebugModeCheckBox_Changed;
         DebugModeCheckBox.Unchecked += DebugModeCheckBox_Changed;
+        StateChanged += MainWindow_StateChanged;
         UpdateTranslationFrequency();
         AppendLog("Status", "Ready.");
         AppendLog("Log", mainWindowLogPath);
@@ -251,6 +254,12 @@ public partial class MainWindow : Window {
     protected virtual void DebugModeCheckBox_Changed(object sender, RoutedEventArgs e) {
         lastRenderedFrame = null;
         SaveSettings();
+    }
+
+    protected virtual void MainWindow_StateChanged(object? sender, EventArgs e) {
+        if (WindowState != WindowState.Minimized) {
+            lastRestorableWindowState = WindowState;
+        }
     }
 
     protected virtual Task PrepareTranslationRuntimeAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
@@ -670,9 +679,11 @@ public partial class MainWindow : Window {
         SelectComboBoxItem(PipelinePresetCombo, settings.PipelinePreset);
         TranslationFrequencySlider.Value = ClampFrequency(settings.TranslationFrequency);
         DebugModeCheckBox.IsChecked = settings.DebugMode;
+        ApplyWindowPlacement(settings);
     }
 
     protected virtual void SaveSettings() {
+        var bounds = GetCurrentWindowBounds();
         settingsStore.Save(new AppSettings(
             GetComboBoxText(TranslationModelCombo, AppSettings.Default.TranslationModel),
             GetComboBoxText(TargetLanguageCombo, AppSettings.Default.TargetLanguage),
@@ -680,8 +691,55 @@ public partial class MainWindow : Window {
             DebugModeCheckBox.IsChecked == true,
             GetComboBoxText(PipelinePresetCombo, AppSettings.Default.PipelinePreset),
             GetComboBoxText(SourceLanguageCombo, AppSettings.Default.SourceLanguage),
-            GetSelectedOcrEngine()
+            GetSelectedOcrEngine(),
+            bounds.Left,
+            bounds.Top,
+            bounds.Width,
+            bounds.Height,
+            lastRestorableWindowState.ToString()
         ));
+    }
+
+    protected virtual void ApplyWindowPlacement(AppSettings settings) {
+        if (settings.WindowLeft is not { } left
+            || settings.WindowTop is not { } top
+            || settings.WindowWidth is not { } width
+            || settings.WindowHeight is not { } height) {
+            return;
+        }
+
+        var bounds = new Rect(left, top, width, height);
+        if (!IsRestorableWindowBounds(bounds)) {
+            return;
+        }
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = Math.Max(bounds.Width, MinWidth);
+        Height = Math.Max(bounds.Height, MinHeight);
+        if (Enum.TryParse<WindowState>(settings.WindowState, out var windowState) && windowState != WindowState.Minimized) {
+            lastRestorableWindowState = windowState;
+            WindowState = windowState;
+        }
+    }
+
+    protected virtual Rect GetCurrentWindowBounds() {
+        return WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+    }
+
+    protected virtual bool IsRestorableWindowBounds(Rect bounds) {
+        if (bounds.Width < MinWidth || bounds.Height < MinHeight) {
+            return false;
+        }
+
+        var virtualScreenBounds = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight
+        );
+        return virtualScreenBounds.IntersectsWith(bounds);
     }
 
     protected virtual void SelectComboBoxItem(System.Windows.Controls.ComboBox comboBox, string value) {
@@ -697,9 +755,14 @@ public partial class MainWindow : Window {
         return Math.Clamp(frequency, TranslationFrequencySlider.Minimum, TranslationFrequencySlider.Maximum);
     }
 
-    protected override void OnClosed(EventArgs e) {
+    protected override void OnClosing(CancelEventArgs e) {
         timer.Stop();
         SaveSettings();
+        StateChanged -= MainWindow_StateChanged;
+        base.OnClosing(e);
+    }
+
+    protected override void OnClosed(EventArgs e) {
         if (ollamaRuntimeManager is not null) {
             ollamaRuntimeManager.StatusChanged -= OllamaRuntimeManager_StatusChanged;
         }
