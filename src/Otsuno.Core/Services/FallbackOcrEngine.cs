@@ -9,15 +9,18 @@ public class FallbackOcrEngine(IOcrEngine primary, IOcrEngine fallback) : IOcrEn
     protected bool primaryFailed;
 
     public string CurrentBackendName { get; protected set; } = GetBackendName(primary);
+    public string? LastWarning { get; protected set; }
 
     public virtual async Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
         if (!primaryFailed) {
             try {
                 var regions = await primary.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
                 CurrentBackendName = GetBackendName(primary);
+                LastWarning = null;
                 return regions;
-            } catch when (!cancellationToken.IsCancellationRequested) {
+            } catch (Exception ex) when (!cancellationToken.IsCancellationRequested) {
                 primaryFailed = true;
+                LastWarning = $"{GetBackendName(primary)} failed. Falling back to {GetBackendName(fallback)}. {ex.Message}";
             }
         }
 

@@ -158,10 +158,29 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
     }
 
     protected virtual void InstallPaddleOcrDependencies() {
-        var result = RunPythonCommand("-m pip install --disable-pip-version-check paddleocr paddlepaddle", timeout: TimeSpan.FromMinutes(10));
+        InstallPythonPackage(
+            "PaddlePaddle",
+            "-m pip install --disable-pip-version-check paddlepaddle==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        );
+        InstallPythonPackage("PaddleOCR", "-m pip install --disable-pip-version-check paddleocr");
+    }
+
+    protected virtual void InstallPythonPackage(string packageName, string arguments) {
+        var result = RunPythonCommand(arguments, timeout: TimeSpan.FromMinutes(10));
         if (result.ExitCode != 0) {
-            throw new InvalidOperationException($"Failed to install PaddleOCR dependencies: {result.Error}{result.Output}");
+            throw new InvalidOperationException(CreateInstallFailureMessage(packageName, arguments, result));
         }
+    }
+
+    protected virtual string CreateInstallFailureMessage(string packageName, string arguments, ProcessResult result) {
+        return string.Join(
+            Environment.NewLine,
+            $"Failed to install {packageName}.",
+            $"Command: {pythonPath} {arguments}",
+            $"Exit code: {result.ExitCode}",
+            $"stderr: {result.Error.Trim()}",
+            $"stdout: {result.Output.Trim()}"
+        );
     }
 
     protected virtual ProcessResult RunPythonCommand(string arguments, TimeSpan? timeout = null) {

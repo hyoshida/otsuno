@@ -362,6 +362,7 @@ public class RealtimeTranslationPipelineTests {
         Assert.Equal("fallback", Assert.Single(first).Id);
         Assert.Equal("fallback", Assert.Single(second).Id);
         Assert.Equal("StubOcrEngine", engine.CurrentBackendName);
+        Assert.Contains("OCR failed.", engine.LastWarning);
     }
 
     protected static async Task<TranslationFrame> ProcessUntilRegionAsync(RealtimeTranslationPipeline pipeline) {

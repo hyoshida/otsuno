@@ -120,7 +120,9 @@ public partial class MainWindow : Window {
 
         RenderFrame(frame);
         UpdateOcrStatus();
-        SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
+        if (!TrySetOcrWarningStatus()) {
+            SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
+        }
     }
 
     protected virtual void HandlePipelineError(Exception exception) {
@@ -209,7 +211,30 @@ public partial class MainWindow : Window {
 
     protected virtual void UpdateOcrStatus() {
         var backendName = ocrEngine is IOcrBackendStatus status ? status.CurrentBackendName : "-";
-        OcrStatusText.Text = $"OCR: {backendName}";
+        var warning = GetOcrWarning();
+        OcrStatusText.Text = string.IsNullOrWhiteSpace(warning)
+            ? $"OCR: {backendName}"
+            : $"OCR: {backendName} (warning)";
+        OcrStatusText.ToolTip = warning;
+    }
+
+    protected virtual bool TrySetOcrWarningStatus() {
+        var warning = GetOcrWarning();
+        if (string.IsNullOrWhiteSpace(warning)) {
+            return false;
+        }
+
+        SetErrorStatus($"OCR warning: {ShortenStatusMessage(warning)}");
+        return true;
+    }
+
+    protected virtual string? GetOcrWarning() {
+        return ocrEngine is IOcrBackendStatus status ? status.LastWarning : null;
+    }
+
+    protected virtual string ShortenStatusMessage(string message) {
+        var normalized = string.Join(" ", message.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 240 ? normalized : $"{normalized[..237]}...";
     }
 
     protected virtual void SetRunningState(bool isRunning) {
