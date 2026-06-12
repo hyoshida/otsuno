@@ -8,7 +8,7 @@ using Otsuno.Core.Models;
 
 namespace Otsuno.Infrastructure.Windows.Ocr;
 
-public class PaddleOcrEngine : IOcrEngine, IDisposable {
+public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
     protected static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNameCaseInsensitive = true
     };
@@ -28,6 +28,8 @@ public class PaddleOcrEngine : IOcrEngine, IDisposable {
     protected Process? process;
     protected bool dependenciesChecked;
     protected bool disposed;
+
+    public string CurrentBackendName => "PaddleOCR";
 
     public PaddleOcrEngine(string sourceLanguage, string targetLanguage) : this(
         sourceLanguage,

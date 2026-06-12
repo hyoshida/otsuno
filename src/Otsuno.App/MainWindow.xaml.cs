@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Otsuno.Core.Abstractions;
 using Otsuno.Core.Models;
 using Otsuno.Core.Pipeline;
 using Otsuno.Core.Services;
@@ -20,6 +21,7 @@ public partial class MainWindow : Window {
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
+    protected IOcrEngine? ocrEngine;
     protected RealtimeTranslationPipeline? pipeline;
     private bool isProcessing;
     private bool isRunning;
@@ -53,12 +55,13 @@ public partial class MainWindow : Window {
     protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {
         var sourceLanguage = GetSelectedSourceLanguage();
         var targetLanguage = GetSelectedTargetLanguage();
+        ocrEngine = new FallbackOcrEngine(
+            new PaddleOcrEngine(sourceLanguage, targetLanguage),
+            new WindowsOcrEngine(sourceLanguage, targetLanguage)
+        );
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
-            new FallbackOcrEngine(
-                new PaddleOcrEngine(sourceLanguage, targetLanguage),
-                new WindowsOcrEngine(sourceLanguage, targetLanguage)
-            ),
+            ocrEngine,
             new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
             GetSelectedPipelineOptions()
@@ -115,6 +118,7 @@ public partial class MainWindow : Window {
         }
 
         RenderFrame(frame);
+        UpdateOcrStatus();
         SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
     }
 
@@ -130,6 +134,7 @@ public partial class MainWindow : Window {
             await PrepareTranslationRuntimeAsync(options, CancellationToken.None);
             pipeline = CreatePipeline(options);
             Start();
+            UpdateOcrStatus();
             SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
         } catch (Exception ex) {
             HandlePipelineError(ex);
@@ -181,11 +186,13 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
+        ocrEngine = null;
         TranslationModelCombo.IsEnabled = true;
         SourceLanguageCombo.IsEnabled = true;
         TargetLanguageCombo.IsEnabled = true;
         PipelinePresetCombo.IsEnabled = true;
         SetRunningState(false);
+        UpdateOcrStatus();
         SetStatus("Stopped.");
     }
 
@@ -197,6 +204,11 @@ public partial class MainWindow : Window {
     protected virtual void SetErrorStatus(string message) {
         StatusText.Foreground = ErrorStatusBrush;
         StatusText.Text = message;
+    }
+
+    protected virtual void UpdateOcrStatus() {
+        var backendName = ocrEngine is IOcrBackendStatus status ? status.CurrentBackendName : "-";
+        OcrStatusText.Text = $"OCR: {backendName}";
     }
 
     protected virtual void SetRunningState(bool isRunning) {

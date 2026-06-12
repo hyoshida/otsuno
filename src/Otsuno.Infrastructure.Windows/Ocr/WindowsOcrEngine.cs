@@ -7,7 +7,7 @@ using Windows.Media.Ocr;
 
 namespace Otsuno.Infrastructure.Windows.Ocr;
 
-public class WindowsOcrEngine : IOcrEngine {
+public class WindowsOcrEngine : IOcrEngine, IOcrBackendStatus {
     public const string DetectLanguage = "Detect language";
     protected const int OcrUpscaleFactor = 2;
     protected const int TileOverlap = 48;
@@ -22,6 +22,8 @@ public class WindowsOcrEngine : IOcrEngine {
 
     protected readonly IReadOnlyList<OcrEngine> engines;
     protected readonly bool shouldUpscale;
+
+    public string CurrentBackendName => "Windows OCR";
 
     public WindowsOcrEngine() {
         engines = [OcrEngine.TryCreateFromUserProfileLanguages()
