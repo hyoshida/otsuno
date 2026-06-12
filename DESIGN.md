@@ -4,26 +4,28 @@
 
 Otsuno is a local-first realtime screen translation tool for PC games. It should feel close to the camera translation mode in mobile Google Translate: text visible in the game is detected, translated, and displayed back over the game with minimal setup.
 
-The first product target is not perfect full-frame translation. The practical target is low-latency translation of dialogue boxes, menus, subtitles, quest text, and UI labels while preserving game performance and avoiding risky game-process injection.
+The first product target is not perfect full-frame translation. The practical target is low-latency, fully automatic translation of dialogue boxes, menus, subtitles, quest text, and UI labels while preserving game performance and avoiding risky game-process injection.
+
+The product should be simple from the user's point of view: launch Otsuno, start a game, and see translated text near the original text. Region selection, model installation, runtime setup, and other technical preparation should be avoided in the default flow.
 
 ## Product Requirements
 
 ### Core Requirements
 
-- Capture a selected monitor, window, or user-defined screen region in real time.
+- Capture the active game window or primary gameplay monitor automatically in real time.
 - Detect text regions from screenshots, including Japanese, English, Chinese, and Latin-script languages at minimum.
 - Translate OCR text into the user's target language using a local model by default.
-- Render translations in a transparent always-on-top overlay without modifying the game process.
+- Render translations near the original text in a transparent always-on-top overlay without modifying the game process.
 - Avoid repeated translation of unchanged text through region tracking, OCR result hashing, and translation caching.
-- Provide simple controls: source language auto/manual, target language, capture region, overlay visibility, translation mode, model selection, and performance preset.
-- Run offline after models are installed.
+- Provide minimal controls: target language, overlay visibility, readability style, and performance preset. Advanced settings can expose model and capture details, but the default path should not require them.
+- Run offline after the app has completed its own bundled or guided model setup. Users should not need to install Ollama, download models, or configure runtimes manually before using the app.
 
 ### Game-Specific Requirements
 
 - Low latency: aim for visible translation updates within 300-800 ms after text stabilizes.
 - Low performance impact: default to a capture/OCR cadence that does not noticeably reduce FPS.
 - Safe integration: use OS-level screen capture and overlay APIs, not DLL injection, memory reading, packet inspection, or game file modification.
-- Respect exclusive fullscreen limitations by recommending borderless fullscreen when needed.
+- Prefer automatic capture of borderless fullscreen/windowed games. If exclusive fullscreen cannot be captured, show a clear in-app suggestion to switch the game to borderless fullscreen.
 - Avoid clicks/focus stealing: overlay should be click-through by default.
 - Handle rapidly changing text by debouncing frames and translating only stable text.
 
@@ -34,6 +36,7 @@ The first product target is not perfect full-frame translation. The practical ta
 - Keep names, numbers, item stats, and keyboard/controller prompts stable.
 - Degrade gracefully: if the local LLM is too slow, switch to a smaller model or phrase-based fallback.
 - Keep all screenshots and recognized text local unless the user explicitly enables an external API.
+- Minimize setup friction: first launch should perform hardware detection, choose a model preset, and prepare required local assets automatically.
 
 ## Recommended Architecture
 
@@ -66,14 +69,15 @@ Use OS-level capture APIs.
 - macOS: ScreenCaptureKit.
 - Linux: PipeWire portal on Wayland, X11 capture where available.
 
-For the first Windows-focused MVP, support monitor capture and manually selected region capture before attempting robust per-window capture. Per-window capture can fail for protected, exclusive fullscreen, or unusual rendering paths.
+For the first Windows-focused MVP, prioritize automatic game-window or active-monitor capture. Manual region selection should be treated as an advanced fallback, not part of the default experience. Per-window capture can fail for protected, exclusive fullscreen, or unusual rendering paths, so the app should automatically fall back to monitor capture where possible.
 
 ### 2. Frame Preprocessor
 
 The preprocessor should improve OCR while keeping CPU/GPU cost bounded.
 
 - Downscale high-resolution captures to the OCR working size.
-- Crop to configured regions.
+- Prefer automatic text-region discovery over user-configured crop regions.
+- Use adaptive region prioritization so likely dialogue, subtitle, menu, and UI text areas are processed first without asking the user to select them.
 - Detect changed regions and skip unchanged frames.
 - Apply contrast enhancement, binarization, sharpening, and optional text-background separation.
 - Use frame debouncing: OCR only after text remains visually stable for a small time window.
@@ -117,8 +121,15 @@ Recommended local model strategy:
 
 Recommended runtime:
 
-- `llama.cpp`/GGUF or Ollama for the first local model backend.
+- Embedded `llama.cpp`/GGUF runtime for the default product path.
+- Ollama-compatible integration can be provided as an advanced option for users who already use Ollama.
 - Keep a model provider interface so the app can later support ONNX Runtime, DirectML, TensorRT-LLM, MLX, or external APIs.
+
+Packaging strategy:
+
+- Bundle a small default translation model when license and installer size allow.
+- If bundling is too large, the app should download the recommended model during first launch with one confirmation, progress display, checksum verification, and no external setup steps.
+- Model/runtime updates should be managed inside Otsuno.
 
 Translation should use short structured prompts and require JSON output:
 
@@ -138,9 +149,10 @@ The overlay should be separate from the game process.
 
 - Transparent always-on-top window.
 - Click-through by default, with an edit/selection mode toggle.
-- Draw translated text near or over the original region.
+- Draw translated text near or over the original region. This is the primary display mode.
 - Support background shadow/outline for readability.
-- Support modes: replace-style block, subtitle panel, side panel, and tooltip-on-hover.
+- Support automatic collision avoidance so translated labels do not cover important UI elements more than necessary.
+- Optional later modes can include subtitle panel or side panel views, but they are not MVP defaults.
 
 On Windows, a native overlay window is preferable for the final product. For rapid prototyping, Tauri, Electron, or a native C#/WinUI overlay can work, but renderer latency and transparency behavior must be tested with games.
 
@@ -148,12 +160,13 @@ On Windows, a native overlay window is preferable for the final product. For rap
 
 1. Windows only.
 2. Borderless fullscreen/windowed games only.
-3. Manual region selection.
+3. Automatic active game/window or monitor capture.
 4. PaddleOCR-based OCR for Japanese/English/Chinese/Latin text.
-5. Local translation through Ollama or llama.cpp server.
-6. Transparent click-through overlay.
+5. Bundled or app-managed local translation runtime based on llama.cpp/GGUF, with Ollama as an optional advanced backend.
+6. Transparent click-through overlay that places translations near the original text.
 7. Translation cache and glossary.
-8. Simple per-game profile saved locally.
+8. Automatic hardware/model preset selection.
+9. Simple per-game profile saved locally.
 
 ## Technology Choices
 
@@ -162,8 +175,8 @@ On Windows, a native overlay window is preferable for the final product. For rap
 - App shell: Rust/Tauri or C#/.NET with a native overlay.
 - Capture: Windows Graphics Capture.
 - OCR: PaddleOCR exported to ONNX, executed with ONNX Runtime or OpenVINO on CPU/GPU.
-- Translation backend: llama.cpp server or Ollama with GGUF models.
-- Overlay: native transparent topmost window; webview overlay only if input transparency and performance are acceptable.
+- Translation backend: embedded llama.cpp runtime with app-managed GGUF models; optional Ollama provider for advanced users.
+- Overlay: native transparent topmost window that draws translations near the source text; webview overlay only if input transparency and performance are acceptable.
 - Storage: SQLite for profiles, cache, glossary, and diagnostics.
 
 ### Why Not Direct Vision-Language Translation First
@@ -184,8 +197,8 @@ Target presets:
 
 | Preset | Capture | OCR | Translation | Target hardware |
 | --- | ---: | ---: | ---: | --- |
-| Low | 2-4 fps region capture | tiny/small OCR | 1B-4B quantized model | CPU or iGPU laptop |
-| Balanced | 5-10 fps region capture | small/medium OCR | 4B-8B quantized model | consumer GPU or recent NPU/CPU |
+| Low | 2-4 fps automatic capture | tiny/small OCR | 1B-4B quantized model | CPU or iGPU laptop |
+| Balanced | 5-10 fps automatic capture | small/medium OCR | 4B-8B quantized model | consumer GPU or recent NPU/CPU |
 | Quality | event/stable-frame OCR | medium OCR + VLM retry | 8B-14B+ model | GPU with sufficient VRAM |
 
 Latency should be measured as separate spans: capture, preprocessing, OCR, merge, translation, overlay draw. Translation calls must be cached aggressively.
@@ -197,23 +210,24 @@ Latency should be measured as separate spans: capture, preprocessing, OCR, merge
 - Warn users that some competitive online games may object to overlays or capture tools.
 - Keep local screenshots private and avoid automatic uploads.
 - Confirm licenses for bundled OCR and LLM models before redistribution.
+- If models are downloaded on first launch, clearly show source, license summary, size, and local storage path.
 
 ## Development Roadmap
 
 ### Phase 0: Feasibility Prototype
 
-- Capture a region of the desktop.
+- Capture the active window or gameplay monitor automatically.
 - Run OCR on still frames.
 - Translate OCR output with a local model server.
-- Render results in a simple overlay or companion window.
+- Render results near the original text in a simple overlay.
 - Measure latency and CPU/GPU use.
 
 ### Phase 1: MVP
 
 - Native Windows capture and overlay.
-- Region selector.
+- Automatic game/window or monitor capture.
 - OCR stabilization and translation cache.
-- Local model management instructions.
+- App-managed local model setup.
 - Glossary and per-game profiles.
 
 ### Phase 2: Game Usability
@@ -237,16 +251,17 @@ Latency should be measured as separate spans: capture, preprocessing, OCR, merge
 - Latency spikes from local LLM translation on low-end machines.
 - Overlay incompatibility with exclusive fullscreen or anti-cheat systems.
 - Model redistribution and license complexity.
+- Installer size or first-launch download size may become large if a useful model is bundled.
 - User trust if translations hallucinate item effects, stats, or choices.
 
 ## Current Recommendation
 
 Build the first version as an OCR-first Windows desktop app:
 
-1. Windows Graphics Capture for region capture.
+1. Windows Graphics Capture for automatic game/window or monitor capture.
 2. PaddleOCR PP-OCRv6 tiny/small/medium presets for OCR.
-3. llama.cpp or Ollama as a replaceable local translation backend.
+3. Embedded llama.cpp/GGUF as the default app-managed translation backend, with Ollama as an optional advanced backend.
 4. TranslateGemma/Qwen/Gemma-family models selected by hardware profile.
-5. Native click-through overlay with SQLite-backed translation cache and glossary.
+5. Native click-through overlay that places translations near the original text, backed by SQLite translation cache and glossary.
 
 This design gives the best chance of being fast, local, game-safe, and incrementally improvable.
