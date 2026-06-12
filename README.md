@@ -50,7 +50,7 @@ The app currently uses real primary-screen capture, PaddleOCR with Windows OCR f
 
 PaddleOCR setup:
 
-Otsuno automatically installs the `paddleocr` and `paddlepaddle` Python packages on first use when they are missing. Python must be available as `python`; otherwise set `OTSUNO_PYTHON` to the Python executable path before starting the app. If PaddleOCR cannot be installed or started, Otsuno falls back to Windows OCR.
+Otsuno first checks whether the configured Python environment can import `paddleocr` and `paddle`. By default it checks `python`; set `OTSUNO_PYTHON` to use a specific executable. If PaddleOCR is not available there, Otsuno creates a dedicated virtual environment under `%LOCALAPPDATA%\Otsuno\Python\paddleocr-venv` and installs `paddleocr` plus the CPU `paddlepaddle` package there. When no compatible Python is found, Otsuno attempts to install Python 3.11 for the current user with `winget` before creating the venv. If PaddleOCR cannot be installed or started, Otsuno falls back to Windows OCR.
 
 Current translation backend:
 

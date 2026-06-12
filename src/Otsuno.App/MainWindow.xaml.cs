@@ -21,6 +21,7 @@ public partial class MainWindow : Window {
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
+    protected PaddleOcrEngine? paddleOcrEngine;
     protected IOcrEngine? ocrEngine;
     protected RealtimeTranslationPipeline? pipeline;
     private bool isProcessing;
@@ -54,8 +55,11 @@ public partial class MainWindow : Window {
     protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {
         var sourceLanguage = GetSelectedSourceLanguage();
         var targetLanguage = GetSelectedTargetLanguage();
+        ReleasePaddleOcrEngine();
+        paddleOcrEngine = new PaddleOcrEngine(sourceLanguage, targetLanguage);
+        paddleOcrEngine.StatusChanged += PaddleOcrEngine_StatusChanged;
         ocrEngine = new FallbackOcrEngine(
-            new PaddleOcrEngine(sourceLanguage, targetLanguage),
+            paddleOcrEngine,
             new WindowsOcrEngine(sourceLanguage, targetLanguage)
         );
         return new RealtimeTranslationPipeline(
@@ -70,6 +74,10 @@ public partial class MainWindow : Window {
 
     protected virtual void OllamaRuntimeManager_StatusChanged(object? sender, OllamaRuntimeStatusChangedEventArgs e) {
         Dispatcher.InvokeAsync(() => SetStatus(e.Message, "Ollama"));
+    }
+
+    protected virtual void PaddleOcrEngine_StatusChanged(object? sender, PaddleOcrStatusChangedEventArgs e) {
+        Dispatcher.InvokeAsync(() => AppendLog("PaddleOCR", e.Message));
     }
 
     protected virtual DispatcherTimer CreateTimer() {
@@ -188,6 +196,7 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
+        ReleasePaddleOcrEngine();
         ocrEngine = null;
         TranslationModelCombo.IsEnabled = true;
         SourceLanguageCombo.IsEnabled = true;
@@ -196,6 +205,16 @@ public partial class MainWindow : Window {
         SetRunningState(false);
         UpdateOcrStatus();
         SetStatus("Stopped.", "Pipeline");
+    }
+
+    protected virtual void ReleasePaddleOcrEngine() {
+        if (paddleOcrEngine is null) {
+            return;
+        }
+
+        paddleOcrEngine.StatusChanged -= PaddleOcrEngine_StatusChanged;
+        paddleOcrEngine.Dispose();
+        paddleOcrEngine = null;
     }
 
     protected virtual void SetStatus(string message, string category = "Status") {
@@ -353,6 +372,7 @@ public partial class MainWindow : Window {
             ollamaRuntimeManager.StatusChanged -= OllamaRuntimeManager_StatusChanged;
         }
 
+        ReleasePaddleOcrEngine();
         overlayWindow.Close();
         base.OnClosed(e);
     }
