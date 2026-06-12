@@ -17,6 +17,9 @@ namespace Otsuno.App;
 public partial class MainWindow : Window {
     protected const string PaddleOcrEngineName = "PaddleOCR";
     protected const string WindowsOcrEngineName = "Windows OCR";
+    protected const int OverlayBoundsTolerance = 8;
+    protected const int OverlayTextDistanceTolerance = 2;
+    protected const double OverlayTextDistanceRatio = 0.2;
     protected static readonly Brush NormalStatusBrush = new SolidColorBrush(Color.FromRgb(215, 222, 233));
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
     protected static readonly Brush BlackLogBrush = new SolidColorBrush(Color.FromRgb(143, 160, 184));
@@ -43,6 +46,7 @@ public partial class MainWindow : Window {
     protected PaddleOcrEngine? paddleOcrEngine;
     protected IOcrEngine? ocrEngine;
     protected RealtimeTranslationPipeline? pipeline;
+    protected TranslationFrame? lastRenderedFrame;
     private bool isProcessing;
     private bool isRunning;
     protected const int MaxLogLines = 300;
@@ -245,6 +249,7 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void DebugModeCheckBox_Changed(object sender, RoutedEventArgs e) {
+        lastRenderedFrame = null;
         SaveSettings();
     }
 
@@ -269,6 +274,7 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
+        lastRenderedFrame = null;
         ReleasePipeline();
         ReleasePaddleOcrEngine();
         ocrEngine = null;
@@ -348,8 +354,144 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void RenderFrame(TranslationFrame frame) {
+        if (ShouldSkipOverlayRender(frame)) {
+            return;
+        }
+
         AppendFrameLog(frame);
         overlayWindow.Render(frame.Regions, frame.DebugRegions ?? Array.Empty<DebugTextRegion>(), DebugModeCheckBox.IsChecked == true);
+        lastRenderedFrame = frame;
+    }
+
+    protected virtual bool ShouldSkipOverlayRender(TranslationFrame frame) {
+        return lastRenderedFrame is not null && AreOverlayFramesSimilar(lastRenderedFrame, frame, DebugModeCheckBox.IsChecked == true);
+    }
+
+    protected virtual bool AreOverlayFramesSimilar(TranslationFrame previous, TranslationFrame current, bool debugMode) {
+        return AreTranslatedRegionsSimilar(previous.Regions, current.Regions, debugMode)
+            && AreDebugRegionsSimilar(previous.DebugRegions ?? Array.Empty<DebugTextRegion>(), current.DebugRegions ?? Array.Empty<DebugTextRegion>(), debugMode);
+    }
+
+    protected virtual bool AreTranslatedRegionsSimilar(
+        IReadOnlyList<TranslatedRegion> previousRegions,
+        IReadOnlyList<TranslatedRegion> currentRegions,
+        bool debugMode) {
+        if (previousRegions.Count != currentRegions.Count) {
+            return false;
+        }
+
+        var previousOrdered = OrderTranslatedRegions(previousRegions);
+        var currentOrdered = OrderTranslatedRegions(currentRegions);
+        for (var index = 0; index < previousOrdered.Length; index++) {
+            if (!AreTranslatedRegionsSimilar(previousOrdered[index], currentOrdered[index], debugMode)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected virtual bool AreTranslatedRegionsSimilar(TranslatedRegion previous, TranslatedRegion current, bool debugMode) {
+        if (!AreBoundsSimilar(previous.Bounds, current.Bounds)
+            || !AreTextsSimilar(previous.SourceText, current.SourceText)
+            || !string.Equals(NormalizeOverlayText(previous.TranslatedText), NormalizeOverlayText(current.TranslatedText), StringComparison.Ordinal)) {
+            return false;
+        }
+
+        return !debugMode || Nullable.Equals(previous.TranslationWaitDuration, current.TranslationWaitDuration);
+    }
+
+    protected virtual bool AreDebugRegionsSimilar(
+        IReadOnlyList<DebugTextRegion> previousRegions,
+        IReadOnlyList<DebugTextRegion> currentRegions,
+        bool debugMode) {
+        if (previousRegions.Count != currentRegions.Count) {
+            return false;
+        }
+
+        var previousOrdered = OrderDebugRegions(previousRegions);
+        var currentOrdered = OrderDebugRegions(currentRegions);
+        for (var index = 0; index < previousOrdered.Length; index++) {
+            if (!AreDebugRegionsSimilar(previousOrdered[index], currentOrdered[index], debugMode)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected virtual bool AreDebugRegionsSimilar(DebugTextRegion previous, DebugTextRegion current, bool debugMode) {
+        if (!AreBoundsSimilar(previous.Bounds, current.Bounds)
+            || !AreTextsSimilar(previous.SourceText, current.SourceText)) {
+            return false;
+        }
+
+        return !debugMode || current.TranslationQueuedAt is null;
+    }
+
+    protected virtual TranslatedRegion[] OrderTranslatedRegions(IReadOnlyList<TranslatedRegion> regions) {
+        return regions
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
+            .ThenBy(region => NormalizeOverlayText(region.SourceText))
+            .ThenBy(region => NormalizeOverlayText(region.TranslatedText))
+            .ToArray();
+    }
+
+    protected virtual DebugTextRegion[] OrderDebugRegions(IReadOnlyList<DebugTextRegion> regions) {
+        return regions
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
+            .ThenBy(region => NormalizeOverlayText(region.SourceText))
+            .ToArray();
+    }
+
+    protected virtual bool AreBoundsSimilar(ScreenRect previous, ScreenRect current) {
+        return Math.Abs(previous.X - current.X) <= OverlayBoundsTolerance
+            && Math.Abs(previous.Y - current.Y) <= OverlayBoundsTolerance
+            && Math.Abs(previous.Width - current.Width) <= OverlayBoundsTolerance
+            && Math.Abs(previous.Height - current.Height) <= OverlayBoundsTolerance;
+    }
+
+    protected virtual bool AreTextsSimilar(string previous, string current) {
+        var normalizedPrevious = NormalizeOverlayText(previous);
+        var normalizedCurrent = NormalizeOverlayText(current);
+        if (string.Equals(normalizedPrevious, normalizedCurrent, StringComparison.Ordinal)) {
+            return true;
+        }
+
+        if (normalizedPrevious.Length == 0 || normalizedCurrent.Length == 0) {
+            return false;
+        }
+
+        var maxLength = Math.Max(normalizedPrevious.Length, normalizedCurrent.Length);
+        var distance = GetOverlayTextDistance(normalizedPrevious, normalizedCurrent);
+        return distance <= OverlayTextDistanceTolerance
+            && distance <= maxLength * OverlayTextDistanceRatio;
+    }
+
+    protected virtual string NormalizeOverlayText(string text) {
+        return string.Join(" ", text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    protected virtual int GetOverlayTextDistance(string first, string second) {
+        var previous = Enumerable.Range(0, second.Length + 1).ToArray();
+        var current = new int[second.Length + 1];
+
+        for (var i = 1; i <= first.Length; i++) {
+            current[0] = i;
+            for (var j = 1; j <= second.Length; j++) {
+                var cost = first[i - 1] == second[j - 1] ? 0 : 1;
+                current[j] = Math.Min(
+                    Math.Min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + cost
+                );
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        return previous[second.Length];
     }
 
     protected virtual void AppendFrameLog(TranslationFrame frame) {
