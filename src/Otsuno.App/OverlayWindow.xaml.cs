@@ -51,7 +51,7 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual void RenderRegion(TranslatedRegion region, bool debugMode) {
-        var label = CreateLabel(CreateTranslatedLabelText(region, debugMode), TranslatedLabelBrush, TranslatedBorderBrush);
+        var label = CreateLabel(region.TranslatedText, CreateTranslatedMetaText(region, debugMode), TranslatedLabelBrush, TranslatedBorderBrush);
         Canvas.SetLeft(label, GetLabelLeft(region));
         Canvas.SetTop(label, GetLabelTop(region));
         label.Width = Math.Max(region.Bounds.Width, 48);
@@ -60,7 +60,7 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual void RenderDebugRegion(DebugTextRegion region) {
-        var label = CreateLabel(CreateDebugLabelText(region), DebugLabelBrush, DebugBorderBrush);
+        var label = CreateLabel(region.SourceText, CreateDebugMetaText(region), DebugLabelBrush, DebugBorderBrush);
         Canvas.SetLeft(label, Math.Max(0, region.Bounds.X));
         Canvas.SetTop(label, Math.Max(0, region.Bounds.Y));
         label.Width = Math.Max(region.Bounds.Width, 48);
@@ -76,16 +76,16 @@ public partial class OverlayWindow : Window {
         return Math.Max(0, region.Bounds.Y);
     }
 
-    protected virtual string CreateTranslatedLabelText(TranslatedRegion region, bool debugMode) {
+    protected virtual string? CreateTranslatedMetaText(TranslatedRegion region, bool debugMode) {
         if (!debugMode || region.TranslationDuration is null) {
-            return region.TranslatedText;
+            return null;
         }
 
-        return $"[TR {FormatDuration(region.TranslationDuration.Value)}] {region.TranslatedText}";
+        return $"TR {FormatDuration(region.TranslationDuration.Value)}";
     }
 
-    protected virtual string CreateDebugLabelText(DebugTextRegion region) {
-        return $"[OCR {FormatDuration(region.OcrDuration)}] {region.SourceText}";
+    protected virtual string CreateDebugMetaText(DebugTextRegion region) {
+        return $"OCR {FormatDuration(region.OcrDuration)}";
     }
 
     protected virtual string FormatDuration(TimeSpan duration) {
@@ -94,20 +94,45 @@ public partial class OverlayWindow : Window {
             : $"{duration.TotalMilliseconds:0}ms";
     }
 
-    protected virtual Border CreateLabel(string text, Brush background, Brush borderBrush) {
+    protected virtual Border CreateLabel(string text, string? metaText, Brush background, Brush borderBrush) {
         return new Border {
             Background = background,
             BorderBrush = borderBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(8, 5, 8, 5),
-            Child = new TextBlock {
-                Text = text,
-                Foreground = Brushes.White,
-                FontSize = 16,
-                FontWeight = FontWeights.SemiBold,
-                TextWrapping = TextWrapping.Wrap,
-            },
+            Child = CreateLabelContent(text, metaText),
+        };
+    }
+
+    protected virtual StackPanel CreateLabelContent(string text, string? metaText) {
+        var panel = new StackPanel();
+        if (!string.IsNullOrWhiteSpace(metaText)) {
+            panel.Children.Add(CreateMetaTextBlock(metaText));
+        }
+
+        panel.Children.Add(CreateBodyTextBlock(text));
+        return panel;
+    }
+
+    protected virtual TextBlock CreateMetaTextBlock(string text) {
+        return new TextBlock {
+            Text = text,
+            Foreground = DebugMetaBrush,
+            FontSize = 10,
+            FontWeight = FontWeights.Normal,
+            TextWrapping = TextWrapping.NoWrap,
+            Margin = new Thickness(0, 0, 0, 1)
+        };
+    }
+
+    protected virtual TextBlock CreateBodyTextBlock(string text) {
+        return new TextBlock {
+            Text = text,
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap
         };
     }
 
@@ -115,6 +140,7 @@ public partial class OverlayWindow : Window {
     protected static Brush TranslatedBorderBrush { get; } = new SolidColorBrush(Color.FromArgb(230, 113, 170, 255));
     protected static Brush DebugLabelBrush { get; } = new SolidColorBrush(Color.FromArgb(210, 74, 44, 14));
     protected static Brush DebugBorderBrush { get; } = new SolidColorBrush(Color.FromArgb(235, 255, 181, 91));
+    protected static Brush DebugMetaBrush { get; } = new SolidColorBrush(Color.FromArgb(230, 218, 229, 244));
 
     protected virtual void EnableClickThrough() {
         var handle = new WindowInteropHelper(this).Handle;
