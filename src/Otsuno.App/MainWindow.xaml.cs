@@ -16,6 +16,7 @@ public partial class MainWindow : Window {
     protected static readonly Brush NormalStatusBrush = new SolidColorBrush(Color.FromRgb(215, 222, 233));
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
 
+    protected readonly AppSettingsStore settingsStore = new();
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
@@ -32,6 +33,9 @@ public partial class MainWindow : Window {
         ollamaRuntimeManager = CreateOllamaRuntimeManager();
         overlayWindow = new OverlayWindow();
         timer = CreateTimer();
+        ApplySettings(settingsStore.Load());
+        TranslationModelCombo.SelectionChanged += TranslationModelCombo_SelectionChanged;
+        TargetLanguageCombo.SelectionChanged += TargetLanguageCombo_SelectionChanged;
         TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
         UpdateTranslationFrequency();
     }
@@ -66,6 +70,7 @@ public partial class MainWindow : Window {
 
     protected virtual void TranslationFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
         UpdateTranslationFrequency();
+        SaveSettings();
     }
 
     protected virtual void UpdateTranslationFrequency() {
@@ -125,6 +130,14 @@ public partial class MainWindow : Window {
 
     protected virtual void StopButton_Click(object sender, RoutedEventArgs e) {
         Stop();
+    }
+
+    protected virtual void TargetLanguageCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) {
+        SaveSettings();
+    }
+
+    protected virtual void TranslationModelCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) {
+        SaveSettings();
     }
 
     protected virtual Task PrepareTranslationRuntimeAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
@@ -194,8 +207,36 @@ public partial class MainWindow : Window {
         return comboBox.Text.Trim() is { Length: > 0 } selectedText ? selectedText : fallback;
     }
 
+    protected virtual void ApplySettings(AppSettings settings) {
+        SelectComboBoxItem(TranslationModelCombo, settings.TranslationModel);
+        SelectComboBoxItem(TargetLanguageCombo, settings.TargetLanguage);
+        TranslationFrequencySlider.Value = ClampFrequency(settings.TranslationFrequency);
+    }
+
+    protected virtual void SaveSettings() {
+        settingsStore.Save(new AppSettings(
+            GetComboBoxText(TranslationModelCombo, AppSettings.Default.TranslationModel),
+            GetComboBoxText(TargetLanguageCombo, AppSettings.Default.TargetLanguage),
+            ClampFrequency(TranslationFrequencySlider.Value)
+        ));
+    }
+
+    protected virtual void SelectComboBoxItem(System.Windows.Controls.ComboBox comboBox, string value) {
+        foreach (var item in comboBox.Items.OfType<System.Windows.Controls.ComboBoxItem>()) {
+            if (string.Equals(item.Content?.ToString(), value, StringComparison.Ordinal)) {
+                comboBox.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    protected virtual double ClampFrequency(double frequency) {
+        return Math.Clamp(frequency, TranslationFrequencySlider.Minimum, TranslationFrequencySlider.Maximum);
+    }
+
     protected override void OnClosed(EventArgs e) {
         timer.Stop();
+        SaveSettings();
         if (ollamaRuntimeManager is not null) {
             ollamaRuntimeManager.StatusChanged -= OllamaRuntimeManager_StatusChanged;
         }
