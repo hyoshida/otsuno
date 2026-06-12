@@ -7,23 +7,14 @@ See [DESIGN.md](DESIGN.md) for the initial requirements, architecture, technolog
 
 ## Installation
 
-Otsuno currently runs as a Windows desktop app built with .NET.
+Otsuno currently runs as a Windows desktop app.
 
-1. Install the [.NET SDK](https://dotnet.microsoft.com/download).
-2. Clone this repository.
-3. Build the solution:
+1. Open the [latest release](https://github.com/hyoshida/otsuno/releases/latest).
+2. Download the `Otsuno-*-win-x64.zip` asset.
+3. Extract the zip file.
+4. Run `Otsuno.App.exe` from the extracted folder.
 
-```bash
-dotnet build Otsuno.slnx
-```
-
-4. Run the app:
-
-```bash
-dotnet run --project src/Otsuno.App/Otsuno.App.csproj
-```
-
-The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
+If the app does not start because .NET is missing, install the [.NET Desktop Runtime](https://dotnet.microsoft.com/download) and try again. The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
 
 ### PaddleOCR setup
 
