@@ -51,7 +51,13 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual void RenderRegion(TranslatedRegion region, bool debugMode) {
-        var label = CreateLabel(region.TranslatedText, CreateTranslatedMetaText(region, debugMode), TranslatedLabelBrush, TranslatedBorderBrush);
+        var label = CreateLabel(
+            region.TranslatedText,
+            CreateTranslatedMetaText(region, debugMode),
+            CreateTranslatedSupplementText(region, debugMode),
+            TranslatedLabelBrush,
+            TranslatedBorderBrush
+        );
         Canvas.SetLeft(label, GetLabelLeft(region));
         Canvas.SetTop(label, GetLabelTop(region));
         label.Width = Math.Max(region.Bounds.Width, 48);
@@ -60,7 +66,16 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual void RenderDebugRegion(DebugTextRegion region) {
-        var label = CreateLabel(CreateDebugBodyText(region), CreateDebugMetaText(region), DebugLabelBrush, DebugBorderBrush);
+        var hasOllamaResponse = !string.IsNullOrWhiteSpace(region.TranslationDebugInfo?.LastResponseText);
+        var label = hasOllamaResponse
+            ? CreateLabel(
+                region.TranslationDebugInfo!.LastResponseText!,
+                CreateDebugMetaText(region),
+                CreateRejectedTranslationSupplementText(region),
+                TranslatedLabelBrush,
+                TranslatedBorderBrush
+            )
+            : CreateLabel(CreateDebugBodyText(region), CreateDebugMetaText(region), null, DebugLabelBrush, DebugBorderBrush);
         Canvas.SetLeft(label, Math.Max(0, region.Bounds.X));
         Canvas.SetTop(label, Math.Max(0, region.Bounds.Y));
         label.Width = Math.Max(region.Bounds.Width, region.TranslationDebugInfo is null ? 48 : 240);
@@ -90,6 +105,12 @@ public partial class OverlayWindow : Window {
         );
     }
 
+    protected virtual string? CreateTranslatedSupplementText(TranslatedRegion region, bool debugMode) {
+        return debugMode && !string.IsNullOrWhiteSpace(region.SourceText)
+            ? $"OCR: {Truncate(region.SourceText, 160)}"
+            : null;
+    }
+
     protected virtual string CreateDebugMetaText(DebugTextRegion region) {
         return string.Join(
             " | ",
@@ -110,6 +131,20 @@ public partial class OverlayWindow : Window {
             new[] {
                 region.SourceText,
                 CreateOllamaResponseText(region.TranslationDebugInfo),
+                CreateOllamaErrorText(region.TranslationDebugInfo)
+            }.Where(text => !string.IsNullOrWhiteSpace(text))
+        );
+    }
+
+    protected virtual string? CreateRejectedTranslationSupplementText(DebugTextRegion region) {
+        if (region.TranslationDebugInfo is null) {
+            return null;
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            new[] {
+                $"OCR: {Truncate(region.SourceText, 160)}",
                 CreateOllamaErrorText(region.TranslationDebugInfo)
             }.Where(text => !string.IsNullOrWhiteSpace(text))
         );
@@ -142,24 +177,28 @@ public partial class OverlayWindow : Window {
             : $"{duration.TotalMilliseconds:0}ms";
     }
 
-    protected virtual Border CreateLabel(string text, string? metaText, Brush background, Brush borderBrush) {
+    protected virtual Border CreateLabel(string text, string? metaText, string? supplementText, Brush background, Brush borderBrush) {
         return new Border {
             Background = background,
             BorderBrush = borderBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(8, 5, 8, 5),
-            Child = CreateLabelContent(text, metaText),
+            Child = CreateLabelContent(text, metaText, supplementText),
         };
     }
 
-    protected virtual StackPanel CreateLabelContent(string text, string? metaText) {
+    protected virtual StackPanel CreateLabelContent(string text, string? metaText, string? supplementText) {
         var panel = new StackPanel();
         if (!string.IsNullOrWhiteSpace(metaText)) {
             panel.Children.Add(CreateMetaTextBlock(metaText));
         }
 
         panel.Children.Add(CreateBodyTextBlock(text));
+        if (!string.IsNullOrWhiteSpace(supplementText)) {
+            panel.Children.Add(CreateSupplementTextBlock(supplementText));
+        }
+
         return panel;
     }
 
@@ -181,6 +220,17 @@ public partial class OverlayWindow : Window {
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap
+        };
+    }
+
+    protected virtual TextBlock CreateSupplementTextBlock(string text) {
+        return new TextBlock {
+            Text = text,
+            Foreground = DebugMetaBrush,
+            FontSize = 10,
+            FontWeight = FontWeights.Normal,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 3, 0, 0)
         };
     }
 
