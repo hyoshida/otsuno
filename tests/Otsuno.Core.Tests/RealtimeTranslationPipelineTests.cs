@@ -141,6 +141,9 @@ public class RealtimeTranslationPipelineTests {
 
         stopwatch.Stop();
         Assert.Empty(first.Regions);
+        var debugRegion = Assert.Single(first.DebugRegions ?? []);
+        Assert.Equal("text", debugRegion.RegionId);
+        Assert.Equal("Start", debugRegion.SourceText);
         Assert.True(stopwatch.ElapsedMilliseconds < 500);
 
         translator.Complete();
@@ -151,6 +154,7 @@ public class RealtimeTranslationPipelineTests {
         var region = Assert.Single(second.Regions);
         Assert.True(region.FromCache);
         Assert.Equal("ja:Start", region.TranslatedText);
+        Assert.NotNull(region.TranslationDuration);
     }
 
     [Fact]
@@ -172,6 +176,7 @@ public class RealtimeTranslationPipelineTests {
         var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
 
         Assert.Equal(3, frame.Regions.Count);
+        Assert.All(frame.Regions, region => Assert.NotNull(region.TranslationDuration));
         Assert.Equal(1, translator.BatchCallCount);
         Assert.Equal(0, translator.SingleCallCount);
         Assert.Collection(

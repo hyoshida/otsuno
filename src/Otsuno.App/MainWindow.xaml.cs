@@ -37,6 +37,8 @@ public partial class MainWindow : Window {
         TranslationModelCombo.SelectionChanged += TranslationModelCombo_SelectionChanged;
         TargetLanguageCombo.SelectionChanged += TargetLanguageCombo_SelectionChanged;
         TranslationFrequencySlider.ValueChanged += TranslationFrequencySlider_ValueChanged;
+        DebugModeCheckBox.Checked += DebugModeCheckBox_Changed;
+        DebugModeCheckBox.Unchecked += DebugModeCheckBox_Changed;
         UpdateTranslationFrequency();
     }
 
@@ -140,6 +142,10 @@ public partial class MainWindow : Window {
         SaveSettings();
     }
 
+    protected virtual void DebugModeCheckBox_Changed(object sender, RoutedEventArgs e) {
+        SaveSettings();
+    }
+
     protected virtual Task PrepareTranslationRuntimeAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
         return ollamaRuntimeManager?.EnsureReadyAsync(options, cancellationToken) ?? Task.CompletedTask;
     }
@@ -183,7 +189,7 @@ public partial class MainWindow : Window {
             AddTranslation(region);
         }
 
-        overlayWindow.Render(frame.Regions);
+        overlayWindow.Render(frame.Regions, frame.DebugRegions ?? Array.Empty<DebugTextRegion>(), DebugModeCheckBox.IsChecked == true);
     }
 
     protected virtual void AddTranslation(TranslatedRegion region) {
@@ -211,13 +217,15 @@ public partial class MainWindow : Window {
         SelectComboBoxItem(TranslationModelCombo, settings.TranslationModel);
         SelectComboBoxItem(TargetLanguageCombo, settings.TargetLanguage);
         TranslationFrequencySlider.Value = ClampFrequency(settings.TranslationFrequency);
+        DebugModeCheckBox.IsChecked = settings.DebugMode;
     }
 
     protected virtual void SaveSettings() {
         settingsStore.Save(new AppSettings(
             GetComboBoxText(TranslationModelCombo, AppSettings.Default.TranslationModel),
             GetComboBoxText(TargetLanguageCombo, AppSettings.Default.TargetLanguage),
-            ClampFrequency(TranslationFrequencySlider.Value)
+            ClampFrequency(TranslationFrequencySlider.Value),
+            DebugModeCheckBox.IsChecked == true
         ));
     }
 

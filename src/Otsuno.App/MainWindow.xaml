@@ -49,6 +49,11 @@
                            Foreground="#D7DEE9"
                            VerticalAlignment="Center"
                            Margin="0,0,12,0" />
+                <CheckBox x:Name="DebugModeCheckBox"
+                          Content="Debug"
+                          Foreground="#D7DEE9"
+                          VerticalAlignment="Center"
+                          Margin="0,0,12,0" />
                 <Button x:Name="StartButton" Content="Start" Width="96" Click="StartButton_Click" Margin="0,0,8,0" />
                 <Button x:Name="StopButton" Content="Stop" Width="96" Click="StopButton_Click" IsEnabled="False" />
             </WrapPanel>

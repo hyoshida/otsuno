@@ -1,6 +1,7 @@
 using Otsuno.Core.Abstractions;
 using Otsuno.Core.Models;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Otsuno.Core.Pipeline;
@@ -12,6 +13,7 @@ public class RealtimeTranslationPipeline {
     protected readonly ITranslationCache translationCache;
     protected readonly RealtimeTranslationPipelineOptions options;
     protected readonly ConcurrentDictionary<string, byte> pendingTranslations = new(StringComparer.Ordinal);
+    protected readonly ConcurrentDictionary<string, TimeSpan> translationDurations = new(StringComparer.Ordinal);
 
     public RealtimeTranslationPipeline(
         IScreenCaptureService captureService,
@@ -45,7 +47,10 @@ public class RealtimeTranslationPipeline {
             return new TranslationFrame(DateTimeOffset.UtcNow, Array.Empty<TranslatedRegion>());
         }
 
+        var ocrStopwatch = Stopwatch.StartNew();
         var textRegions = await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
+        ocrStopwatch.Stop();
+
         var entries = new List<TranslationEntry>();
         var uncachedRequests = new List<TranslationRequest>();
 
@@ -76,15 +81,21 @@ public class RealtimeTranslationPipeline {
             .Where(entry => entry.Translation is not null)
             .Select(entry => CreateTranslatedRegion(entry.Region, entry.Translation!))
             .ToArray();
-        return new TranslationFrame(frame.CapturedAt, translatedRegions);
+        var debugRegions = entries
+            .Where(entry => entry.Translation is null)
+            .Select(entry => new DebugTextRegion(entry.Region.Id, entry.Region.Bounds, entry.Region.Text, ocrStopwatch.Elapsed))
+            .ToArray();
+        return new TranslationFrame(frame.CapturedAt, translatedRegions, debugRegions);
     }
 
     protected virtual async Task TranslateAndApplyBatchAsync(
         IReadOnlyList<TranslationEntry> entries,
         IReadOnlyList<TranslationRequest> requests,
         CancellationToken cancellationToken) {
+        var stopwatch = Stopwatch.StartNew();
         var translations = await TranslateBatchAsync(requests, cancellationToken).ConfigureAwait(false);
-        StoreTranslations(requests, translations);
+        stopwatch.Stop();
+        StoreTranslations(requests, translations, stopwatch.Elapsed);
 
         var translationsByKey = translations.ToDictionary(BuildPendingKey, StringComparer.Ordinal);
         foreach (var entry in entries.Where(entry => entry.Translation is null)) {
@@ -121,8 +132,10 @@ public class RealtimeTranslationPipeline {
 
     protected virtual async Task TranslateAndStoreBatchAsync(IReadOnlyList<string> keys, IReadOnlyList<TranslationRequest> requests) {
         try {
+            var stopwatch = Stopwatch.StartNew();
             var translations = await TranslateBatchAsync(requests, CancellationToken.None).ConfigureAwait(false);
-            StoreTranslations(requests, translations);
+            stopwatch.Stop();
+            StoreTranslations(requests, translations, stopwatch.Elapsed);
         } catch {
             // Background translation failures are retried by future frames.
         } finally {
@@ -147,12 +160,16 @@ public class RealtimeTranslationPipeline {
         return translations;
     }
 
-    protected virtual void StoreTranslations(IReadOnlyList<TranslationRequest> requests, IReadOnlyList<TranslationResponse> translations) {
+    protected virtual void StoreTranslations(
+        IReadOnlyList<TranslationRequest> requests,
+        IReadOnlyList<TranslationResponse> translations,
+        TimeSpan translationDuration) {
         var requestsByKey = requests.ToDictionary(BuildPendingKey, StringComparer.Ordinal);
         foreach (var translation in translations) {
             var key = BuildPendingKey(translation);
             if (requestsByKey.TryGetValue(key, out var request)) {
                 translationCache.Store(request, translation);
+                translationDurations[key] = translationDuration;
             }
         }
     }
@@ -268,8 +285,13 @@ public class RealtimeTranslationPipeline {
             region.Text,
             translation.TranslatedText,
             region.Confidence,
-            translation.FromCache
+            translation.FromCache,
+            GetTranslationDuration(translation)
         );
+    }
+
+    protected virtual TimeSpan? GetTranslationDuration(TranslationResponse translation) {
+        return translationDurations.TryGetValue(BuildPendingKey(translation), out var duration) ? duration : null;
     }
 
     protected class TranslationEntry(TextRegion region, TranslationRequest request, TranslationResponse? translation) {

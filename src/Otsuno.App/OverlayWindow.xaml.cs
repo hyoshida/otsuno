@@ -33,17 +33,36 @@ public partial class OverlayWindow : Window {
     }
 
     public virtual void Render(IReadOnlyList<TranslatedRegion> regions) {
+        Render(regions, Array.Empty<DebugTextRegion>(), debugMode: false);
+    }
+
+    public virtual void Render(IReadOnlyList<TranslatedRegion> regions, IReadOnlyList<DebugTextRegion> debugRegions, bool debugMode) {
         OverlayCanvas.Children.Clear();
 
+        if (debugMode) {
+            foreach (var region in debugRegions) {
+                RenderDebugRegion(region);
+            }
+        }
+
         foreach (var region in regions) {
-            RenderRegion(region);
+            RenderRegion(region, debugMode);
         }
     }
 
-    protected virtual void RenderRegion(TranslatedRegion region) {
-        var label = CreateLabel(region.TranslatedText);
+    protected virtual void RenderRegion(TranslatedRegion region, bool debugMode) {
+        var label = CreateLabel(CreateTranslatedLabelText(region, debugMode), TranslatedLabelBrush, TranslatedBorderBrush);
         Canvas.SetLeft(label, GetLabelLeft(region));
         Canvas.SetTop(label, GetLabelTop(region));
+        label.Width = Math.Max(region.Bounds.Width, 48);
+        label.MinHeight = Math.Max(region.Bounds.Height, 20);
+        OverlayCanvas.Children.Add(label);
+    }
+
+    protected virtual void RenderDebugRegion(DebugTextRegion region) {
+        var label = CreateLabel(CreateDebugLabelText(region), DebugLabelBrush, DebugBorderBrush);
+        Canvas.SetLeft(label, Math.Max(0, region.Bounds.X));
+        Canvas.SetTop(label, Math.Max(0, region.Bounds.Y));
         label.Width = Math.Max(region.Bounds.Width, 48);
         label.MinHeight = Math.Max(region.Bounds.Height, 20);
         OverlayCanvas.Children.Add(label);
@@ -57,10 +76,28 @@ public partial class OverlayWindow : Window {
         return Math.Max(0, region.Bounds.Y);
     }
 
-    protected virtual Border CreateLabel(string text) {
+    protected virtual string CreateTranslatedLabelText(TranslatedRegion region, bool debugMode) {
+        if (!debugMode || region.TranslationDuration is null) {
+            return region.TranslatedText;
+        }
+
+        return $"[TR {FormatDuration(region.TranslationDuration.Value)}] {region.TranslatedText}";
+    }
+
+    protected virtual string CreateDebugLabelText(DebugTextRegion region) {
+        return $"[OCR {FormatDuration(region.OcrDuration)}] {region.SourceText}";
+    }
+
+    protected virtual string FormatDuration(TimeSpan duration) {
+        return duration.TotalSeconds >= 1
+            ? $"{duration.TotalSeconds:0.0}s"
+            : $"{duration.TotalMilliseconds:0}ms";
+    }
+
+    protected virtual Border CreateLabel(string text, Brush background, Brush borderBrush) {
         return new Border {
-            Background = new SolidColorBrush(Color.FromArgb(220, 12, 16, 24)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(230, 113, 170, 255)),
+            Background = background,
+            BorderBrush = borderBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(8, 5, 8, 5),
@@ -73,6 +110,11 @@ public partial class OverlayWindow : Window {
             },
         };
     }
+
+    protected static Brush TranslatedLabelBrush { get; } = new SolidColorBrush(Color.FromArgb(220, 12, 16, 24));
+    protected static Brush TranslatedBorderBrush { get; } = new SolidColorBrush(Color.FromArgb(230, 113, 170, 255));
+    protected static Brush DebugLabelBrush { get; } = new SolidColorBrush(Color.FromArgb(210, 74, 44, 14));
+    protected static Brush DebugBorderBrush { get; } = new SolidColorBrush(Color.FromArgb(235, 255, 181, 91));
 
     protected virtual void EnableClickThrough() {
         var handle = new WindowInteropHelper(this).Handle;
