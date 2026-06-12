@@ -1,17 +1,56 @@
 using System.Runtime.InteropServices.WindowsRuntime;
 using Otsuno.Core.Abstractions;
 using Otsuno.Core.Models;
+using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 
 namespace Otsuno.Infrastructure.Windows.Ocr;
 
 public class WindowsOcrEngine : IOcrEngine {
-    protected readonly OcrEngine engine;
+    protected static readonly IReadOnlyDictionary<string, string> OcrLanguageTags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        ["ja"] = "ja-JP",
+        ["ko"] = "ko-KR",
+        ["zh-hans"] = "zh-CN",
+        ["zh-hant"] = "zh-TW",
+        ["en"] = "en-US"
+    };
+
+    protected readonly IReadOnlyList<OcrEngine> engines;
 
     public WindowsOcrEngine() {
-        engine = OcrEngine.TryCreateFromUserProfileLanguages()
-            ?? throw new InvalidOperationException("Windows OCR is not available for the current user languages.");
+        engines = [OcrEngine.TryCreateFromUserProfileLanguages()
+            ?? throw new InvalidOperationException("Windows OCR is not available for the current user languages.")];
+    }
+
+    public WindowsOcrEngine(string targetLanguage) {
+        engines = CreateSourceEngines(targetLanguage);
+    }
+
+    protected virtual IReadOnlyList<OcrEngine> CreateSourceEngines(string targetLanguage) {
+        if (!OcrLanguageTags.ContainsKey(targetLanguage)) {
+            return [OcrEngine.TryCreateFromUserProfileLanguages()
+                ?? throw new InvalidOperationException("Windows OCR is not available for the current user languages.")];
+        }
+
+        var sourceLanguageTags = OcrLanguageTags
+            .Where(pair => !string.Equals(pair.Key, targetLanguage, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => pair.Value)
+            .ToArray();
+        var sourceEngines = sourceLanguageTags
+            .Select(CreateEngineIfSupported)
+            .OfType<OcrEngine>()
+            .ToArray();
+        if (sourceEngines.Length == 0) {
+            throw new InvalidOperationException($"No Windows OCR source languages are installed for target '{targetLanguage}'. Install at least one non-target Windows language/OCR feature such as {string.Join(", ", sourceLanguageTags)}.");
+        }
+
+        return sourceEngines;
+    }
+
+    protected virtual OcrEngine? CreateEngineIfSupported(string languageTag) {
+        var language = new Language(languageTag);
+        return OcrEngine.IsLanguageSupported(language) ? OcrEngine.TryCreateFromLanguage(language) : null;
     }
 
     public virtual async Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
@@ -21,8 +60,13 @@ public class WindowsOcrEngine : IOcrEngine {
         }
 
         using var bitmap = CreateSoftwareBitmap(frame);
-        var result = await engine.RecognizeAsync(bitmap).AsTask(cancellationToken);
-        return CreateRegions(result);
+        var regions = new List<TextRegion>();
+        foreach (var engine in engines) {
+            var result = await engine.RecognizeAsync(bitmap).AsTask(cancellationToken);
+            AddRegions(regions, result);
+        }
+
+        return regions;
     }
 
     protected virtual SoftwareBitmap CreateSoftwareBitmap(CapturedFrame frame) {
@@ -35,14 +79,10 @@ public class WindowsOcrEngine : IOcrEngine {
         );
     }
 
-    protected virtual IReadOnlyList<TextRegion> CreateRegions(OcrResult result) {
-        var regions = new List<TextRegion>();
-
+    protected virtual void AddRegions(List<TextRegion> regions, OcrResult result) {
         foreach (var line in result.Lines) {
             AddLineRegion(regions, line);
         }
-
-        return regions;
     }
 
     protected virtual void AddLineRegion(List<TextRegion> regions, OcrLine line) {

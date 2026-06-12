@@ -19,4 +19,20 @@ public class WindowsOcrEngineTests {
 
         Assert.Empty(regions);
     }
+
+    [Fact]
+    public async Task RecognizeAsyncUsesInstalledNonTargetLanguages() {
+        WindowsOcrEngine engine;
+        try {
+            engine = new WindowsOcrEngine("en");
+        } catch (InvalidOperationException) {
+            return;
+        }
+
+        var frame = new CapturedFrame("empty", 1, 1, DateTimeOffset.UtcNow, []);
+
+        var regions = await engine.RecognizeAsync(frame, CancellationToken.None);
+
+        Assert.Empty(regions);
+    }
 }

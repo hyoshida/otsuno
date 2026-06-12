@@ -50,9 +50,10 @@ public partial class MainWindow : Window {
     }
 
     protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {
+        var targetLanguage = GetSelectedTargetLanguage();
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
-            new WindowsOcrEngine(),
+            new WindowsOcrEngine(targetLanguage),
             new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
             GetSelectedPipelineOptions()
@@ -158,6 +159,7 @@ public partial class MainWindow : Window {
     protected virtual void Start() {
         isRunning = true;
         TranslationModelCombo.IsEnabled = false;
+        TargetLanguageCombo.IsEnabled = false;
         PipelinePresetCombo.IsEnabled = false;
         overlayWindow.Show();
         timer.Start();
@@ -170,6 +172,7 @@ public partial class MainWindow : Window {
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
         TranslationModelCombo.IsEnabled = true;
+        TargetLanguageCombo.IsEnabled = true;
         PipelinePresetCombo.IsEnabled = true;
         SetRunningState(false);
         SetStatus("Stopped.");
