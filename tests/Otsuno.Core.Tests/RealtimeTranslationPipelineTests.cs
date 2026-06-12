@@ -133,6 +133,10 @@ public class RealtimeTranslationPipelineTests {
     [Fact]
     public async Task ProcessOnceSkipsFullFrameOcrWhenChangedFrameRegionDetectsNoText() {
         var previousPixels = new byte[4 * 4 * 4];
+        previousPixels[(1 * 4 + 1) * 4] = 90;
+        previousPixels[(1 * 4 + 1) * 4 + 1] = 80;
+        previousPixels[(1 * 4 + 1) * 4 + 2] = 70;
+        previousPixels[(1 * 4 + 1) * 4 + 3] = 255;
         var currentPixels = previousPixels.ToArray();
         currentPixels[(1 * 4 + 2) * 4] = 255;
         var frames = new[] {
@@ -150,7 +154,7 @@ public class RealtimeTranslationPipelineTests {
             ocr,
             new CountingTranslationService(),
             new InMemoryTranslationCache(),
-            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
+            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 1 }
         );
         var detectedRegions = new List<TextRegion>();
         pipeline.ChangedFrameTextDetected += (_, e) => detectedRegions.AddRange(e.Regions);
@@ -159,8 +163,10 @@ public class RealtimeTranslationPipelineTests {
         var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
 
         Assert.Equal(2, ocr.CallCount);
-        Assert.Equal(1, ocr.Frames[1].Width);
-        Assert.Equal(1, ocr.Frames[1].Height);
+        Assert.Equal(3, ocr.Frames[1].Width);
+        Assert.Equal(3, ocr.Frames[1].Height);
+        Assert.Equal(new byte[] { 0, 0, 0, 255 }, ocr.Frames[1].PixelData![(3 * 4)..(3 * 4 + 4)]);
+        Assert.Equal(new byte[] { 255, 0, 0, 0 }, ocr.Frames[1].PixelData![(4 * 4)..(4 * 4 + 4)]);
         Assert.Empty(detectedRegions);
         Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
     }

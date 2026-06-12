@@ -155,7 +155,7 @@ public class RealtimeTranslationPipeline {
 
         return regions
             .Take(options.MaxChangedRegionsPerFrame)
-            .Select(region => new OcrFrame(CreateCroppedFrame(frame, region)))
+            .Select(region => new OcrFrame(CreateChangedCroppedFrame(frame, previousFrameSnapshot, region)))
             .ToArray();
     }
 
@@ -268,12 +268,18 @@ public class RealtimeTranslationPipeline {
         return new ScreenRect(left, top, right - left, bottom - top);
     }
 
-    protected virtual CapturedFrame CreateCroppedFrame(CapturedFrame frame, ScreenRect region) {
+    protected virtual CapturedFrame CreateChangedCroppedFrame(CapturedFrame frame, FrameSnapshot snapshot, ScreenRect region) {
         var pixels = new byte[region.Width * region.Height * 4];
         for (var y = 0; y < region.Height; y++) {
-            var sourceIndex = ((region.Y + y) * frame.Width + region.X) * 4;
-            var targetIndex = y * region.Width * 4;
-            Array.Copy(frame.PixelData!, sourceIndex, pixels, targetIndex, region.Width * 4);
+            for (var x = 0; x < region.Width; x++) {
+                var sourcePixelIndex = (region.Y + y) * frame.Width + region.X + x;
+                var targetIndex = (y * region.Width + x) * 4;
+                if (IsChangedPixel(frame.PixelData!, snapshot.PixelData, sourcePixelIndex)) {
+                    Array.Copy(frame.PixelData!, sourcePixelIndex * 4, pixels, targetIndex, 4);
+                } else {
+                    pixels[targetIndex + 3] = 255;
+                }
+            }
         }
 
         return new CapturedFrame(frame.SourceId, region.Width, region.Height, frame.CapturedAt, pixels);
