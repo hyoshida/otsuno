@@ -1,5 +1,4 @@
 using System.Net.Http;
-using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -18,6 +17,7 @@ public partial class MainWindow : Window {
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
 
     protected readonly AppSettingsStore settingsStore = new();
+    protected readonly List<string> logLines = [];
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
@@ -25,13 +25,11 @@ public partial class MainWindow : Window {
     protected RealtimeTranslationPipeline? pipeline;
     private bool isProcessing;
     private bool isRunning;
-
-    public ObservableCollection<TranslationRow> Translations { get; } = [];
+    protected const int MaxLogLines = 300;
 
     public MainWindow() {
         InitializeComponent();
 
-        DataContext = this;
         ollamaRuntimeManager = CreateOllamaRuntimeManager();
         overlayWindow = new OverlayWindow();
         timer = CreateTimer();
@@ -44,6 +42,7 @@ public partial class MainWindow : Window {
         DebugModeCheckBox.Checked += DebugModeCheckBox_Changed;
         DebugModeCheckBox.Unchecked += DebugModeCheckBox_Changed;
         UpdateTranslationFrequency();
+        AppendLog("Status", "Ready.");
     }
 
     protected virtual OllamaRuntimeManager CreateOllamaRuntimeManager() {
@@ -70,7 +69,7 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void OllamaRuntimeManager_StatusChanged(object? sender, OllamaRuntimeStatusChangedEventArgs e) {
-        Dispatcher.InvokeAsync(() => SetStatus(e.Message));
+        Dispatcher.InvokeAsync(() => SetStatus(e.Message, "Ollama"));
     }
 
     protected virtual DispatcherTimer CreateTimer() {
@@ -121,12 +120,12 @@ public partial class MainWindow : Window {
         RenderFrame(frame);
         UpdateOcrStatus();
         if (!TrySetOcrWarningStatus()) {
-            SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
+            SetStatus($"Processed {frame.Regions.Count} regions.", "Pipeline");
         }
     }
 
     protected virtual void HandlePipelineError(Exception exception) {
-        SetErrorStatus($"Pipeline error: {exception.Message}");
+        SetErrorStatus($"Pipeline error: {exception.Message}", "Pipeline");
     }
 
     protected virtual async void StartButton_Click(object sender, RoutedEventArgs e) {
@@ -138,7 +137,7 @@ public partial class MainWindow : Window {
             pipeline = CreatePipeline(options);
             Start();
             UpdateOcrStatus();
-            SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
+            SetStatus("Running screen capture, OCR, and Ollama translation pipeline.", "Pipeline");
         } catch (Exception ex) {
             HandlePipelineError(ex);
             SetRunningState(false);
@@ -196,17 +195,19 @@ public partial class MainWindow : Window {
         PipelinePresetCombo.IsEnabled = true;
         SetRunningState(false);
         UpdateOcrStatus();
-        SetStatus("Stopped.");
+        SetStatus("Stopped.", "Pipeline");
     }
 
-    protected virtual void SetStatus(string message) {
+    protected virtual void SetStatus(string message, string category = "Status") {
         StatusText.Foreground = NormalStatusBrush;
         StatusText.Text = message;
+        AppendLog(category, message);
     }
 
-    protected virtual void SetErrorStatus(string message) {
+    protected virtual void SetErrorStatus(string message, string category = "Error") {
         StatusText.Foreground = ErrorStatusBrush;
         StatusText.Text = message;
+        AppendLog(category, message);
     }
 
     protected virtual void UpdateOcrStatus() {
@@ -224,7 +225,7 @@ public partial class MainWindow : Window {
             return false;
         }
 
-        SetErrorStatus($"OCR warning: {ShortenStatusMessage(warning)}");
+        SetErrorStatus($"OCR warning: {ShortenStatusMessage(warning)}", "OCR");
         return true;
     }
 
@@ -243,16 +244,47 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void RenderFrame(TranslationFrame frame) {
-        Translations.Clear();
-        foreach (var region in frame.Regions) {
-            AddTranslation(region);
-        }
-
+        AppendFrameLog(frame);
         overlayWindow.Render(frame.Regions, frame.DebugRegions ?? Array.Empty<DebugTextRegion>(), DebugModeCheckBox.IsChecked == true);
     }
 
-    protected virtual void AddTranslation(TranslatedRegion region) {
-        Translations.Add(TranslationRow.From(region));
+    protected virtual void AppendFrameLog(TranslationFrame frame) {
+        AppendLog("Frame", $"Regions={frame.Regions.Count}, DebugRegions={frame.DebugRegions?.Count ?? 0}");
+        foreach (var region in frame.Regions) {
+            var debugRegion = frame.DebugRegions?.FirstOrDefault(debug => debug.RegionId == region.RegionId);
+            AppendRegionLog(region, debugRegion?.OcrDuration);
+        }
+    }
+
+    protected virtual void AppendRegionLog(TranslatedRegion region, TimeSpan? ocrDuration) {
+        var bounds = $"{region.Bounds.X},{region.Bounds.Y} {region.Bounds.Width}x{region.Bounds.Height}";
+        var source = ShortenLogText(region.SourceText, 80);
+        var translation = ShortenLogText(region.TranslatedText, 80);
+        var formattedOcrDuration = FormatOptionalDuration(ocrDuration);
+        var translationDuration = FormatOptionalDuration(region.TranslationDuration);
+        AppendLog(
+            "Region",
+            $"{region.RegionId} {bounds} conf={region.Confidence:0.##} cached={region.FromCache} OCR={formattedOcrDuration} TR={translationDuration} source=\"{source}\" translated=\"{translation}\""
+        );
+    }
+
+    protected virtual void AppendLog(string category, string message) {
+        logLines.Add($"[{DateTime.Now:HH:mm:ss}] {category}: {message}");
+        while (logLines.Count > MaxLogLines) {
+            logLines.RemoveAt(0);
+        }
+
+        LogText.Text = string.Join(Environment.NewLine, logLines);
+        LogText.ScrollToEnd();
+    }
+
+    protected virtual string ShortenLogText(string text, int maxLength) {
+        var normalized = string.Join(" ", text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= maxLength ? normalized : $"{normalized[..(maxLength - 3)]}...";
+    }
+
+    protected virtual string FormatOptionalDuration(TimeSpan? duration) {
+        return duration is null ? "-" : $"{duration.Value.TotalMilliseconds:0}ms";
     }
 
     protected virtual string GetSelectedTargetLanguage() {
@@ -323,12 +355,5 @@ public partial class MainWindow : Window {
 
         overlayWindow.Close();
         base.OnClosed(e);
-    }
-}
-
-public record TranslationRow(string RegionId, string SourceText, string TranslatedText, string BoundsText, bool FromCache) {
-    public static TranslationRow From(TranslatedRegion region) {
-        var bounds = $"{region.Bounds.X},{region.Bounds.Y} {region.Bounds.Width}x{region.Bounds.Height}";
-        return new TranslationRow(region.RegionId, region.SourceText, region.TranslatedText, bounds, region.FromCache);
     }
 }

@@ -88,27 +88,34 @@
             </Grid>
         </Border>
 
-        <DataGrid Grid.Row="2"
-                  ItemsSource="{Binding Translations}"
-                  AutoGenerateColumns="False"
-                  CanUserAddRows="False"
-                  CanUserDeleteRows="False"
-                  IsReadOnly="True"
-                  GridLinesVisibility="None"
-                  HeadersVisibility="Column"
-                  Background="#10131A"
-                  Foreground="#E7ECF3"
-                  RowBackground="#151923"
-                  AlternatingRowBackground="#111722"
-                  BorderBrush="#293143"
-                  BorderThickness="1">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Region" Binding="{Binding RegionId}" Width="130" />
-                <DataGridTextColumn Header="Source" Binding="{Binding SourceText}" Width="*" />
-                <DataGridTextColumn Header="Translation" Binding="{Binding TranslatedText}" Width="*" />
-                <DataGridTextColumn Header="Bounds" Binding="{Binding BoundsText}" Width="170" />
-                <DataGridCheckBoxColumn Header="Cached" Binding="{Binding FromCache}" Width="90" />
-            </DataGrid.Columns>
-        </DataGrid>
+        <Border Grid.Row="2"
+                Background="#10131A"
+                BorderBrush="#293143"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="Logs" Foreground="#F4F7FB" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <TextBox Grid.Row="1"
+                         x:Name="LogText"
+                         Text="Ready."
+                         Foreground="#D7DEE9"
+                         Background="#10131A"
+                         BorderThickness="0"
+                         FontFamily="Consolas"
+                         FontSize="12"
+                         IsReadOnly="True"
+                         IsUndoEnabled="False"
+                         AcceptsReturn="True"
+                         AcceptsTab="True"
+                         TextWrapping="NoWrap"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>
