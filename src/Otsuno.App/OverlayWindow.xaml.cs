@@ -39,10 +39,8 @@ public partial class OverlayWindow : Window {
     public virtual void Render(IReadOnlyList<TranslatedRegion> regions, IReadOnlyList<DebugTextRegion> debugRegions, bool debugMode) {
         OverlayCanvas.Children.Clear();
 
-        if (debugMode) {
-            foreach (var region in debugRegions) {
-                RenderDebugRegion(region);
-            }
+        foreach (var region in debugRegions) {
+            RenderDebugRegion(region, debugMode);
         }
 
         foreach (var region in regions) {
@@ -65,17 +63,23 @@ public partial class OverlayWindow : Window {
         OverlayCanvas.Children.Add(label);
     }
 
-    protected virtual void RenderDebugRegion(DebugTextRegion region) {
+    protected virtual void RenderDebugRegion(DebugTextRegion region, bool debugMode) {
         var hasOllamaResponse = !string.IsNullOrWhiteSpace(region.TranslationDebugInfo?.LastResponseText);
         var label = hasOllamaResponse
             ? CreateLabel(
                 region.TranslationDebugInfo!.LastResponseText!,
-                CreateDebugMetaText(region),
-                CreateRejectedTranslationSupplementText(region),
+                debugMode ? CreateDebugMetaText(region) : null,
+                debugMode ? CreateRejectedTranslationSupplementText(region) : null,
                 TranslatedLabelBrush,
                 TranslatedBorderBrush
             )
-            : CreateLabel(CreateDebugBodyText(region), CreateDebugMetaText(region), null, DebugLabelBrush, DebugBorderBrush);
+            : CreateLabel(
+                debugMode ? CreateDebugBodyText(region) : region.SourceText,
+                debugMode ? CreateDebugMetaText(region) : null,
+                null,
+                DebugLabelBrush,
+                DebugBorderBrush
+            );
         Canvas.SetLeft(label, Math.Max(0, region.Bounds.X));
         Canvas.SetTop(label, Math.Max(0, region.Bounds.Y));
         label.Width = Math.Max(region.Bounds.Width, region.TranslationDebugInfo is null ? 48 : 240);
