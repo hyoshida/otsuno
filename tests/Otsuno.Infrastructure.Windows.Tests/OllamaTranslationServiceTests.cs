@@ -79,9 +79,55 @@ public class OllamaTranslationServiceTests {
     }
 
     [Fact]
-    public async Task TranslateAsyncDoesNotDisplayPromptLeak() {
+    public async Task TranslateAsyncThrowsWhenPromptLeakPersists() {
+        var handler = new StubHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Return valid JSON only with this exact shape:" }) })
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Return valid JSON only with this exact shape:" }) })
+            }
+        );
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("Start Game", "auto", "ja");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TranslateAsync(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TranslateAsyncRetriesWhenTranslatedTextContainsSourceText() {
+        var handler = new StubHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "Start Game を開始" } } }) })
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "ゲーム開始" } } }) })
+            }
+        );
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("Start Game", "auto", "ja");
+
+        var response = await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Equal("ゲーム開始", response.TranslatedText);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.DoesNotContain("作り直してください", ReadPrompt(handler.RequestContent));
+    }
+
+    [Fact]
+    public async Task TranslateAsyncDoesNotRetryEnglishOutputWhenItDoesNotContainSourceText() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
-            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Return valid JSON only with this exact shape:" }) })
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Begin the game" }) })
         });
         using var httpClient = new HttpClient(handler);
         using var service = new OllamaTranslationService(
@@ -93,7 +139,8 @@ public class OllamaTranslationServiceTests {
 
         var response = await service.TranslateAsync(request, CancellationToken.None);
 
-        Assert.Equal("Start Game", response.TranslatedText);
+        Assert.Equal("Begin the game", response.TranslatedText);
+        Assert.Equal(1, handler.RequestCount);
     }
 
     [Fact]
@@ -155,7 +202,9 @@ public class OllamaTranslationServiceTests {
         return document.RootElement.GetProperty("prompt").GetString() ?? string.Empty;
     }
 
-    protected class StubHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler {
+    protected class StubHttpMessageHandler(params HttpResponseMessage[] responses) : HttpMessageHandler {
+        protected readonly Queue<HttpResponseMessage> responseQueue = new(responses);
+
         public Uri? RequestUri { get; protected set; }
         public string RequestContent { get; protected set; } = string.Empty;
         public int RequestCount { get; protected set; }
@@ -164,7 +213,7 @@ public class OllamaTranslationServiceTests {
             RequestCount++;
             RequestUri = request.RequestUri;
             RequestContent = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
-            return response;
+            return responseQueue.Count > 1 ? responseQueue.Dequeue() : responseQueue.Peek();
         }
     }
 

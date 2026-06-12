@@ -7,6 +7,8 @@ using Otsuno.Core.Models;
 namespace Otsuno.Infrastructure.Windows.Translation;
 
 public class OllamaTranslationService : IBatchTranslationService, IDisposable {
+    protected const int MaxTranslationAttempts = 2;
+
     protected readonly HttpClient httpClient;
     protected readonly IOllamaRuntimeManager runtimeManager;
     protected readonly OllamaTranslationOptions options;
@@ -36,6 +38,22 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     public virtual async Task<IReadOnlyList<TranslationResponse>> TranslateBatchAsync(IReadOnlyList<TranslationRequest> requests, CancellationToken cancellationToken) {
         await runtimeManager.EnsureReadyAsync(options, cancellationToken).ConfigureAwait(false);
 
+        for (var attempt = 0; attempt < MaxTranslationAttempts; attempt++) {
+            var translatedTexts = await GenerateTranslatedTextsAsync(requests, cancellationToken).ConfigureAwait(false);
+            var responses = requests
+                .Select((request, index) => CreateTranslationResponse(request, translatedTexts[index]))
+                .ToArray();
+            if (responses.All(response => !ContainsSourceText(response))) {
+                return responses;
+            }
+        }
+
+        throw new InvalidOperationException("Ollama returned untranslated source text.");
+    }
+
+    protected virtual async Task<IReadOnlyList<string>> GenerateTranslatedTextsAsync(
+        IReadOnlyList<TranslationRequest> requests,
+        CancellationToken cancellationToken) {
         var ollamaRequest = new OllamaGenerateRequest(
             options.Model,
             CreatePrompt(requests),
@@ -43,14 +61,11 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
             Format: "json",
             Options: new OllamaGenerateOptions(Temperature: 0)
         );
-        var response = await httpClient.PostAsJsonAsync("/api/generate", ollamaRequest, cancellationToken);
+        var response = await httpClient.PostAsJsonAsync("/api/generate", ollamaRequest, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken);
-        var translatedTexts = ExtractTranslatedTexts(ollamaResponse?.Response, requests);
-        return requests
-            .Select((request, index) => CreateTranslationResponse(request, translatedTexts[index]))
-            .ToArray();
+        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken).ConfigureAwait(false);
+        return ExtractTranslatedTexts(ollamaResponse?.Response, requests);
     }
 
     protected virtual TranslationResponse CreateTranslationResponse(TranslationRequest request, string translatedText) {
@@ -83,6 +98,39 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     protected virtual string NormalizeResponse(string text) {
         var normalized = text.Trim().Trim('"');
         return LooksLikePromptLeak(normalized) ? string.Empty : normalized;
+    }
+
+    protected virtual bool ContainsSourceText(TranslationResponse response) {
+        if (LooksMostlyNonTranslatable(response.SourceText)) {
+            return false;
+        }
+
+        var sourceText = NormalizeComparableText(response.SourceText);
+        var translatedText = NormalizeComparableText(response.TranslatedText);
+        return sourceText.Length > 0 && translatedText.Contains(sourceText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    protected virtual bool LooksMostlyNonTranslatable(string text) {
+        var trimmed = text.Trim();
+        if (trimmed.Length <= 3) {
+            return true;
+        }
+
+        if (trimmed.Any(character => character is '\\' or '/' or ':' or '@')) {
+            return true;
+        }
+
+        var letters = trimmed.Count(char.IsLetter);
+        if (letters == 0) {
+            return true;
+        }
+
+        var upperLetters = trimmed.Count(char.IsUpper);
+        return letters <= 4 && upperLetters == letters;
+    }
+
+    protected virtual string NormalizeComparableText(string text) {
+        return string.Join(" ", text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
     protected virtual string? ExtractTranslatedText(string? responseText) {
