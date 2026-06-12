@@ -51,7 +51,8 @@ The app currently uses real primary-screen capture, Windows OCR, and an Ollama-c
 Current translation backend:
 
 - Endpoint: `http://localhost:11434`
-- Default model: `llama3.2:3b`
+- Default model: `qwen2.5:1.5b`
+- Optional model: `llama3.2:3b`
 
 On Windows, the app checks the Ollama runtime before the first translation request. If Ollama is not installed, it attempts to install the official `Ollama.Ollama` package with `winget`, starts the local server, and pulls the default model.
 

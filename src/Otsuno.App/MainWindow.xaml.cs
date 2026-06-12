@@ -17,9 +17,9 @@ public partial class MainWindow : Window {
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
 
     protected readonly DispatcherTimer timer;
-    protected readonly RealtimeTranslationPipeline pipeline;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
+    protected RealtimeTranslationPipeline? pipeline;
     private bool isProcessing;
     private bool isRunning;
 
@@ -29,19 +29,22 @@ public partial class MainWindow : Window {
         InitializeComponent();
 
         DataContext = this;
-        pipeline = CreatePipeline();
+        ollamaRuntimeManager = CreateOllamaRuntimeManager();
         overlayWindow = new OverlayWindow();
         timer = CreateTimer();
     }
 
-    protected virtual RealtimeTranslationPipeline CreatePipeline() {
-        ollamaRuntimeManager = new OllamaRuntimeManager();
-        ollamaRuntimeManager.StatusChanged += OllamaRuntimeManager_StatusChanged;
+    protected virtual OllamaRuntimeManager CreateOllamaRuntimeManager() {
+        var runtimeManager = new OllamaRuntimeManager();
+        runtimeManager.StatusChanged += OllamaRuntimeManager_StatusChanged;
+        return runtimeManager;
+    }
 
+    protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
             new WindowsOcrEngine(),
-            new OllamaTranslationService(OllamaTranslationOptions.Default, new HttpClient(), ollamaRuntimeManager),
+            new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
             new InMemoryTranslationCache(),
             RealtimeTranslationPipelineOptions.LowLatency
         );
@@ -75,6 +78,10 @@ public partial class MainWindow : Window {
     }
 
     protected virtual async Task ProcessFrameAsync(CancellationToken cancellationToken) {
+        if (pipeline is null) {
+            return;
+        }
+
         var targetLanguage = GetSelectedTargetLanguage();
         var frame = await pipeline.ProcessOnceAsync(targetLanguage, cancellationToken);
         if (!isRunning) {
@@ -93,7 +100,9 @@ public partial class MainWindow : Window {
         StartButton.IsEnabled = false;
 
         try {
-            await PrepareTranslationRuntimeAsync(CancellationToken.None);
+            var options = GetSelectedOllamaOptions();
+            await PrepareTranslationRuntimeAsync(options, CancellationToken.None);
+            pipeline = CreatePipeline(options);
             Start();
             SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
         } catch (Exception ex) {
@@ -106,12 +115,13 @@ public partial class MainWindow : Window {
         Stop();
     }
 
-    protected virtual Task PrepareTranslationRuntimeAsync(CancellationToken cancellationToken) {
-        return ollamaRuntimeManager?.EnsureReadyAsync(OllamaTranslationOptions.Default, cancellationToken) ?? Task.CompletedTask;
+    protected virtual Task PrepareTranslationRuntimeAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
+        return ollamaRuntimeManager?.EnsureReadyAsync(options, cancellationToken) ?? Task.CompletedTask;
     }
 
     protected virtual void Start() {
         isRunning = true;
+        TranslationModelCombo.IsEnabled = false;
         overlayWindow.Show();
         timer.Start();
         SetRunningState(true);
@@ -122,6 +132,7 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
+        TranslationModelCombo.IsEnabled = true;
         SetRunningState(false);
         SetStatus("Stopped.");
     }
@@ -155,7 +166,20 @@ public partial class MainWindow : Window {
     }
 
     protected virtual string GetSelectedTargetLanguage() {
-        return TargetLanguageCombo.Text.Trim() is { Length: > 0 } selected ? selected : "ja";
+        return GetComboBoxText(TargetLanguageCombo, "ja");
+    }
+
+    protected virtual OllamaTranslationOptions GetSelectedOllamaOptions() {
+        var model = GetComboBoxText(TranslationModelCombo, OllamaTranslationOptions.Default.Model);
+        return OllamaTranslationOptions.Default with { Model = model };
+    }
+
+    protected virtual string GetComboBoxText(System.Windows.Controls.ComboBox comboBox, string fallback) {
+        if (comboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item) {
+            return item.Content?.ToString()?.Trim() is { Length: > 0 } selectedContent ? selectedContent : fallback;
+        }
+
+        return comboBox.Text.Trim() is { Length: > 0 } selectedText ? selectedText : fallback;
     }
 
     protected override void OnClosed(EventArgs e) {

@@ -12,7 +12,7 @@ public class OllamaRuntimeManager : IOllamaRuntimeManager, IDisposable {
     protected readonly IProcessRunner processRunner;
     protected Uri? configuredEndpoint;
     protected int lastReportedPullProgress = -1;
-    protected bool modelPrepared;
+    protected readonly HashSet<string> preparedModels = new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<OllamaRuntimeStatusChangedEventArgs>? StatusChanged;
 
@@ -50,10 +50,10 @@ public class OllamaRuntimeManager : IOllamaRuntimeManager, IDisposable {
             await WaitForServerAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (!modelPrepared && !await IsModelAvailableAsync(options.Model, cancellationToken).ConfigureAwait(false)) {
+        if (!preparedModels.Contains(options.Model) && !await IsModelAvailableAsync(options.Model, cancellationToken).ConfigureAwait(false)) {
             ReportStatus($"Downloading Ollama model '{options.Model}'. This may take several minutes the first time.");
             await PullModelAsync(ollamaPath, options.Model, cancellationToken).ConfigureAwait(false);
-            modelPrepared = true;
+            preparedModels.Add(options.Model);
         }
 
         ReportStatus("Ollama runtime is ready.");
@@ -74,7 +74,7 @@ public class OllamaRuntimeManager : IOllamaRuntimeManager, IDisposable {
 
     protected virtual async Task<bool> IsReadyAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
         return await IsServerReadyAsync(cancellationToken).ConfigureAwait(false)
-            && (modelPrepared || await IsModelAvailableAsync(options.Model, cancellationToken).ConfigureAwait(false));
+            && (preparedModels.Contains(options.Model) || await IsModelAvailableAsync(options.Model, cancellationToken).ConfigureAwait(false));
     }
 
     protected virtual async Task<bool> IsServerReadyAsync(CancellationToken cancellationToken) {
