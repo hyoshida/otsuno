@@ -12,6 +12,7 @@ public class RealtimeTranslationPipeline {
     protected const double DuplicateRegionOverlapRatio = 0.65;
     protected const int MaxDuplicateTextDistance = 2;
     protected const double MaxDuplicateTextDistanceRatio = 0.25;
+    protected const int CjkSameLineGapMultiplier = 4;
 
     protected readonly IScreenCaptureService captureService;
     protected readonly IOcrEngine ocrEngine;
@@ -459,7 +460,7 @@ public class RealtimeTranslationPipeline {
         var allowedGap = Math.Max(options.MaxTextBlockLineGap, averageHeight * options.MaxTextBlockLineGapRatio);
 
         return IsNextLineInBlock(region.Bounds, bounds, verticalGap, allowedGap)
-            || IsSameLineContinuation(region.Bounds, bounds);
+            || IsSameLineContinuation(region, block);
     }
 
     protected virtual bool IsNextLineInBlock(ScreenRect region, ScreenRect bounds, int verticalGap, double allowedGap) {
@@ -468,12 +469,28 @@ public class RealtimeTranslationPipeline {
             && HasHorizontalRelationship(region, bounds);
     }
 
-    protected virtual bool IsSameLineContinuation(ScreenRect region, ScreenRect bounds) {
-        var horizontalGap = region.X - (bounds.X + bounds.Width);
-        var allowedGap = Math.Min(options.MaxTextBlockIndent, options.MaxTextBlockLineGap);
+    protected virtual bool IsSameLineContinuation(TextRegion region, IReadOnlyList<TextRegion> block) {
+        var bounds = GetBounds(block);
+        var horizontalGap = region.Bounds.X - (bounds.X + bounds.Width);
         return horizontalGap >= 0
-            && horizontalGap <= allowedGap
-            && HasVerticalOverlap(region, bounds);
+            && horizontalGap <= GetSameLineContinuationGap(region, block)
+            && HasVerticalOverlap(region.Bounds, bounds);
+    }
+
+    protected virtual int GetSameLineContinuationGap(TextRegion region, IReadOnlyList<TextRegion> block) {
+        if (ContainsCjkText(region.Text) || block.Any(item => ContainsCjkText(item.Text))) {
+            return options.MaxTextBlockIndent * CjkSameLineGapMultiplier;
+        }
+
+        return Math.Min(options.MaxTextBlockIndent, options.MaxTextBlockLineGap);
+    }
+
+    protected virtual bool ContainsCjkText(string text) {
+        return text.Any(character =>
+            character is >= '\u3040' and <= '\u30ff'
+            || character is >= '\u3400' and <= '\u9fff'
+            || character is >= '\uf900' and <= '\ufaff'
+        );
     }
 
     protected virtual bool HasVerticalOverlap(ScreenRect first, ScreenRect second) {

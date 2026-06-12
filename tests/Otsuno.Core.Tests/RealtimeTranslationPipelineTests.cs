@@ -180,6 +180,32 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceGroupsWideCjkSameLineFragmentsIntoTextBlock() {
+        var capture = new CapturedFrame("test", 900, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("part-1", "実際には我々", new ScreenRect(260, 120, 120, 26), 0.9),
+            new TextRegion("part-2", "の兵士が", new ScreenRect(520, 121, 88, 24), 0.9),
+            new TextRegion("part-3", "駐在していたはずですが、彼らは？", new ScreenRect(260, 152, 360, 26), 0.9),
+        };
+        var translator = new CountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            translator,
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("en", CancellationToken.None);
+
+        var region = Assert.Single(frame.Regions);
+        Assert.Equal(
+            $"実際には我々 の兵士が{Environment.NewLine}駐在していたはずですが、彼らは？",
+            region.SourceText
+        );
+        Assert.Equal(1, translator.CallCount);
+    }
+
+    [Fact]
     public async Task ProcessOnceKeepsStableBoundsForSmallBackgroundJitter() {
         var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
         var ocr = new SequenceOcrEngine([
