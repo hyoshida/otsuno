@@ -26,6 +26,7 @@ public class PaddleOcrEngine : IOcrEngine, IDisposable {
     protected readonly string bridgePath;
     protected readonly SemaphoreSlim processLock = new(1, 1);
     protected Process? process;
+    protected bool dependenciesChecked;
     protected bool disposed;
 
     public PaddleOcrEngine(string sourceLanguage, string targetLanguage) : this(
@@ -119,6 +120,7 @@ public class PaddleOcrEngine : IOcrEngine, IDisposable {
             throw new FileNotFoundException("PaddleOCR bridge script was not found.", bridgePath);
         }
 
+        EnsureDependenciesInstalled();
         process?.Dispose();
         process = Process.Start(new ProcessStartInfo {
             FileName = pythonPath,
@@ -130,6 +132,58 @@ public class PaddleOcrEngine : IOcrEngine, IDisposable {
             CreateNoWindow = true
         }) ?? throw new InvalidOperationException("Failed to start PaddleOCR bridge process.");
         return process;
+    }
+
+    protected virtual void EnsureDependenciesInstalled() {
+        if (dependenciesChecked) {
+            return;
+        }
+
+        dependenciesChecked = true;
+        if (HasPaddleOcrDependencies()) {
+            return;
+        }
+
+        InstallPaddleOcrDependencies();
+        if (!HasPaddleOcrDependencies()) {
+            throw new InvalidOperationException("PaddleOCR dependencies were installed, but Python still cannot import paddleocr and paddle.");
+        }
+    }
+
+    protected virtual bool HasPaddleOcrDependencies() {
+        var result = RunPythonCommand("-c \"import paddleocr; import paddle\"");
+        return result.ExitCode == 0;
+    }
+
+    protected virtual void InstallPaddleOcrDependencies() {
+        var result = RunPythonCommand("-m pip install --disable-pip-version-check paddleocr paddlepaddle", timeout: TimeSpan.FromMinutes(10));
+        if (result.ExitCode != 0) {
+            throw new InvalidOperationException($"Failed to install PaddleOCR dependencies: {result.Error}{result.Output}");
+        }
+    }
+
+    protected virtual ProcessResult RunPythonCommand(string arguments, TimeSpan? timeout = null) {
+        using var dependencyProcess = Process.Start(new ProcessStartInfo {
+            FileName = pythonPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        }) ?? throw new InvalidOperationException($"Failed to start Python: {pythonPath}");
+
+        var outputTask = dependencyProcess.StandardOutput.ReadToEndAsync();
+        var errorTask = dependencyProcess.StandardError.ReadToEndAsync();
+        if (!dependencyProcess.WaitForExit((int)(timeout ?? TimeSpan.FromSeconds(30)).TotalMilliseconds)) {
+            try {
+                dependencyProcess.Kill(entireProcessTree: true);
+            } catch {
+            }
+
+            throw new TimeoutException($"Python command timed out: {pythonPath} {arguments}");
+        }
+
+        return new ProcessResult(dependencyProcess.ExitCode, outputTask.GetAwaiter().GetResult(), errorTask.GetAwaiter().GetResult());
     }
 
     protected virtual string SaveFrameImage(CapturedFrame frame) {
@@ -181,4 +235,6 @@ public class PaddleOcrEngine : IOcrEngine, IDisposable {
     protected record PaddleOcrResponse(IReadOnlyList<PaddleOcrRegion> Regions, string? Error = null);
 
     protected record PaddleOcrRegion(string Text, int X, int Y, int Width, int Height, double Confidence);
+
+    protected record ProcessResult(int ExitCode, string Output, string Error);
 }

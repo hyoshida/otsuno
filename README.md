@@ -48,13 +48,9 @@ The test suite uses xUnit. `Otsuno.Core.Tests` covers the translation cache and 
 
 The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
 
-Optional PaddleOCR setup:
+PaddleOCR setup:
 
-```bash
-python -m pip install paddleocr paddlepaddle
-```
-
-If Python is not available as `python`, set `OTSUNO_PYTHON` to the Python executable path before starting the app. If PaddleOCR cannot be started, Otsuno falls back to Windows OCR.
+Otsuno automatically installs the `paddleocr` and `paddlepaddle` Python packages on first use when they are missing. Python must be available as `python`; otherwise set `OTSUNO_PYTHON` to the Python executable path before starting the app. If PaddleOCR cannot be installed or started, Otsuno falls back to Windows OCR.
 
 Current translation backend:
 
