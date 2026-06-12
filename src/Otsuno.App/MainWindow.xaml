@@ -44,14 +44,14 @@
                         Width="130"
                         Minimum="0.25"
                         Maximum="4"
-                        Value="1.33"
+                        Value="3"
                         TickFrequency="0.25"
                         IsSnapToTickEnabled="True"
                         VerticalAlignment="Center"
                         Margin="0,0,8,0" />
                 <TextBlock x:Name="TranslationFrequencyText"
                            Width="54"
-                           Text="1.3/s"
+                           Text="3/s"
                            Foreground="#D7DEE9"
                            VerticalAlignment="Center"
                            Margin="0,0,12,0" />
