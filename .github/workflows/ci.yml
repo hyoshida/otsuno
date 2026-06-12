@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore Otsuno.slnx
+
+      - name: Build
+        run: dotnet build Otsuno.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test Otsuno.slnx --configuration Release --no-build
+
+  release:
+    name: Publish release artifact
+    needs: build-test
+    if: github.ref_type == 'tag'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish app
+        run: dotnet publish src/Otsuno.App/Otsuno.App.csproj --configuration Release --runtime win-x64 --self-contained false --output publish/Otsuno
+
+      - name: Create zip
+        id: package
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '[\\/:*?"<>|]', '-'
+          $zipPath = "artifacts/Otsuno-$version-win-x64.zip"
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Compress-Archive -Path publish/Otsuno/* -DestinationPath $zipPath -Force
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+
+      - name: Upload release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip_path }}
