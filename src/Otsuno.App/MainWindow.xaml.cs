@@ -21,6 +21,7 @@ public partial class MainWindow : Window {
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
     private bool isProcessing;
+    private bool isRunning;
 
     public ObservableCollection<TranslationRow> Translations { get; } = [];
 
@@ -41,7 +42,8 @@ public partial class MainWindow : Window {
             new PrimaryScreenCaptureService(),
             new WindowsOcrEngine(),
             new OllamaTranslationService(OllamaTranslationOptions.Default, new HttpClient(), ollamaRuntimeManager),
-            new InMemoryTranslationCache()
+            new InMemoryTranslationCache(),
+            RealtimeTranslationPipelineOptions.LowLatency
         );
     }
 
@@ -75,6 +77,10 @@ public partial class MainWindow : Window {
     protected virtual async Task ProcessFrameAsync(CancellationToken cancellationToken) {
         var targetLanguage = GetSelectedTargetLanguage();
         var frame = await pipeline.ProcessOnceAsync(targetLanguage, cancellationToken);
+        if (!isRunning) {
+            return;
+        }
+
         RenderFrame(frame);
         SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
     }
@@ -105,13 +111,16 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void Start() {
+        isRunning = true;
         overlayWindow.Show();
         timer.Start();
         SetRunningState(true);
     }
 
     protected virtual void Stop() {
+        isRunning = false;
         timer.Stop();
+        overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
         SetRunningState(false);
         SetStatus("Stopped.");
