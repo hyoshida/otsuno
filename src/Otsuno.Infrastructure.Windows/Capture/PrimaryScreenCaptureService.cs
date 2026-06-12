@@ -36,9 +36,22 @@ public class PrimaryScreenCaptureService : IScreenCaptureService {
             var length = Math.Abs(data.Stride) * data.Height;
             var pixels = new byte[length];
             System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels, 0, length);
+            ConvertToGrayscale(pixels);
             return pixels;
         } finally {
             bitmap.UnlockBits(data);
+        }
+    }
+
+    protected virtual void ConvertToGrayscale(byte[] pixels) {
+        for (var i = 0; i + 3 < pixels.Length; i += 4) {
+            var blue = pixels[i];
+            var green = pixels[i + 1];
+            var red = pixels[i + 2];
+            var gray = (byte)((red * 77 + green * 150 + blue * 29 + 128) >> 8);
+            pixels[i] = gray;
+            pixels[i + 1] = gray;
+            pixels[i + 2] = gray;
         }
     }
 }
