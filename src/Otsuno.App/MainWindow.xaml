@@ -100,21 +100,23 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="Logs" Foreground="#F4F7FB" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBox Grid.Row="1"
-                         x:Name="LogText"
-                         Text="Ready."
-                         Foreground="#D7DEE9"
-                         Background="#10131A"
-                         BorderThickness="0"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         IsReadOnly="True"
-                         IsUndoEnabled="False"
-                         AcceptsReturn="True"
-                         AcceptsTab="True"
-                         TextWrapping="NoWrap"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto" />
+                <RichTextBox Grid.Row="1"
+                             x:Name="LogText"
+                             Foreground="#D7DEE9"
+                             Background="#10131A"
+                             BorderThickness="0"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             IsReadOnly="True"
+                             IsUndoEnabled="False"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto">
+                    <FlowDocument PagePadding="0" PageWidth="1000000">
+                        <Paragraph Margin="0">
+                            <Run Text="Ready." />
+                        </Paragraph>
+                    </FlowDocument>
+                </RichTextBox>
             </Grid>
         </Border>
     </Grid>

@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Windows;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Otsuno.Core.Abstractions;
@@ -15,9 +16,17 @@ namespace Otsuno.App;
 public partial class MainWindow : Window {
     protected static readonly Brush NormalStatusBrush = new SolidColorBrush(Color.FromRgb(215, 222, 233));
     protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
+    protected static readonly Brush BlackLogBrush = new SolidColorBrush(Color.FromRgb(143, 160, 184));
+    protected static readonly Brush RedLogBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
+    protected static readonly Brush GreenLogBrush = new SolidColorBrush(Color.FromRgb(73, 222, 128));
+    protected static readonly Brush YellowLogBrush = new SolidColorBrush(Color.FromRgb(250, 204, 21));
+    protected static readonly Brush BlueLogBrush = new SolidColorBrush(Color.FromRgb(96, 165, 250));
+    protected static readonly Brush MagentaLogBrush = new SolidColorBrush(Color.FromRgb(244, 114, 182));
+    protected static readonly Brush CyanLogBrush = new SolidColorBrush(Color.FromRgb(34, 211, 238));
+    protected static readonly Brush WhiteLogBrush = new SolidColorBrush(Color.FromRgb(244, 247, 251));
 
     protected readonly AppSettingsStore settingsStore = new();
-    protected readonly List<string> logLines = [];
+    protected readonly List<LogLine> logLines = [];
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
@@ -288,13 +297,92 @@ public partial class MainWindow : Window {
     }
 
     protected virtual void AppendLog(string category, string message) {
-        logLines.Add($"[{DateTime.Now:HH:mm:ss}] {category}: {message}");
+        logLines.Add(new LogLine($"[{DateTime.Now:HH:mm:ss}] {category}: ", message));
         while (logLines.Count > MaxLogLines) {
             logLines.RemoveAt(0);
         }
 
-        LogText.Text = string.Join(Environment.NewLine, logLines);
+        RenderLogLines();
         LogText.ScrollToEnd();
+    }
+
+    protected virtual void RenderLogLines() {
+        var paragraph = new Paragraph { Margin = new Thickness(0) };
+        for (var index = 0; index < logLines.Count; index++) {
+            var line = logLines[index];
+            paragraph.Inlines.Add(new Run(line.Prefix) { Foreground = NormalStatusBrush });
+            AddAnsiLogInlines(paragraph, line.Message);
+            if (index < logLines.Count - 1) {
+                paragraph.Inlines.Add(new LineBreak());
+            }
+        }
+
+        LogText.Document.Blocks.Clear();
+        LogText.Document.Blocks.Add(paragraph);
+    }
+
+    protected virtual void AddAnsiLogInlines(Paragraph paragraph, string text) {
+        var foreground = NormalStatusBrush;
+        var segmentStart = 0;
+        var index = 0;
+        while (index < text.Length) {
+            if (!IsAnsiEscapeStart(text, index)) {
+                index++;
+                continue;
+            }
+
+            AddLogRun(paragraph, text, segmentStart, index, foreground);
+            var sequenceEnd = text.IndexOf('m', index + 2);
+            if (sequenceEnd < 0) {
+                segmentStart = index;
+                break;
+            }
+
+            foreground = ApplyAnsiCodes(text[(index + 2)..sequenceEnd], foreground);
+            index = sequenceEnd + 1;
+            segmentStart = index;
+        }
+
+        AddLogRun(paragraph, text, segmentStart, text.Length, foreground);
+    }
+
+    protected virtual bool IsAnsiEscapeStart(string text, int index) {
+        return text[index] == '\u001b' && index + 1 < text.Length && text[index + 1] == '[';
+    }
+
+    protected virtual Brush ApplyAnsiCodes(string codesText, Brush currentForeground) {
+        var foreground = currentForeground;
+        var codes = string.IsNullOrWhiteSpace(codesText)
+            ? ["0"]
+            : codesText.Split(';', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var codeText in codes) {
+            if (!int.TryParse(codeText, out var code)) {
+                continue;
+            }
+
+            foreground = code switch {
+                0 or 39 => NormalStatusBrush,
+                30 or 90 => BlackLogBrush,
+                31 or 91 => RedLogBrush,
+                32 or 92 => GreenLogBrush,
+                33 or 93 => YellowLogBrush,
+                34 or 94 => BlueLogBrush,
+                35 or 95 => MagentaLogBrush,
+                36 or 96 => CyanLogBrush,
+                37 or 97 => WhiteLogBrush,
+                _ => foreground
+            };
+        }
+
+        return foreground;
+    }
+
+    protected virtual void AddLogRun(Paragraph paragraph, string text, int start, int end, Brush foreground) {
+        if (end <= start) {
+            return;
+        }
+
+        paragraph.Inlines.Add(new Run(text[start..end]) { Foreground = foreground });
     }
 
     protected virtual string ShortenLogText(string text, int maxLength) {
@@ -376,4 +464,6 @@ public partial class MainWindow : Window {
         overlayWindow.Close();
         base.OnClosed(e);
     }
+
+    protected record LogLine(string Prefix, string Message);
 }
