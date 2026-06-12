@@ -30,7 +30,8 @@
                     <ComboBoxItem Content="ja" />
                     <ComboBoxItem Content="en" />
                     <ComboBoxItem Content="ko" />
-                    <ComboBoxItem Content="zh" />
+                    <ComboBoxItem Content="zh-Hans" />
+                    <ComboBoxItem Content="zh-Hant" />
                 </ComboBox>
                 <Button x:Name="StartButton" Content="Start" Width="96" Click="StartButton_Click" Margin="0,0,8,0" />
                 <Button x:Name="StopButton" Content="Stop" Width="96" Click="StopButton_Click" IsEnabled="False" />

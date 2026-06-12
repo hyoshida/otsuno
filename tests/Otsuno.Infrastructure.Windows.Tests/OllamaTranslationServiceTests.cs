@@ -33,7 +33,28 @@ public class OllamaTranslationServiceTests {
         Assert.Contains("\"temperature\":0", handler.RequestContent);
         Assert.Contains("\"model\":", handler.RequestContent);
         Assert.Contains("\"prompt\":", handler.RequestContent);
-        Assert.Contains("Japanese (ja)", handler.RequestContent);
+        Assert.Contains("日本語", ReadPrompt(handler.RequestContent));
+    }
+
+    [Theory]
+    [InlineData("ja", "日本語")]
+    [InlineData("zh-Hans", "繁体字")]
+    [InlineData("zh-Hant", "簡体字")]
+    public async Task TranslateAsyncUsesTargetLanguageDisplayText(string targetLanguage, string expectedText) {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "translated" }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("Start Game", "auto", targetLanguage);
+
+        await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Contains(expectedText, ReadPrompt(handler.RequestContent));
     }
 
     [Fact]

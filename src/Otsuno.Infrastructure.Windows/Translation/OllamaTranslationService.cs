@@ -200,10 +200,11 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
 
     protected virtual string GetTargetLanguageName(string targetLanguage) {
         return targetLanguage.ToLowerInvariant() switch {
-            "ja" => "Japanese (ja)",
-            "en" => "English (en)",
-            "ko" => "Korean (ko)",
-            "zh" => "Chinese (zh)",
+            "ja" => "日本語",
+            "en" => "English",
+            "ko" => "한국어",
+            "zh-hans" => "繁体字",
+            "zh-hant" => "簡体字",
             _ => targetLanguage
         };
     }
