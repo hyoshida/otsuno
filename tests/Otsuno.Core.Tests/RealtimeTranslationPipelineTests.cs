@@ -115,6 +115,8 @@ public class RealtimeTranslationPipelineTests {
             new InMemoryTranslationCache(),
             RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
         );
+        var detectedRegions = new List<TextRegion>();
+        pipeline.ChangedFrameTextDetected += (_, e) => detectedRegions.AddRange(e.Regions);
 
         await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
         var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
@@ -124,6 +126,7 @@ public class RealtimeTranslationPipelineTests {
         Assert.Equal(1, ocr.Frames[1].Height);
         Assert.Equal(2, ocr.Frames[2].Width);
         Assert.Equal(2, ocr.Frames[2].Height);
+        Assert.Equal("S", Assert.Single(detectedRegions).Text);
         Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
     }
 
@@ -149,6 +152,8 @@ public class RealtimeTranslationPipelineTests {
             new InMemoryTranslationCache(),
             RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
         );
+        var detectedRegions = new List<TextRegion>();
+        pipeline.ChangedFrameTextDetected += (_, e) => detectedRegions.AddRange(e.Regions);
 
         await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
         var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
@@ -156,6 +161,7 @@ public class RealtimeTranslationPipelineTests {
         Assert.Equal(2, ocr.CallCount);
         Assert.Equal(1, ocr.Frames[1].Width);
         Assert.Equal(1, ocr.Frames[1].Height);
+        Assert.Empty(detectedRegions);
         Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
     }
 

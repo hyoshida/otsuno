@@ -77,7 +77,7 @@ public partial class MainWindow : Window {
         var sourceLanguage = GetSelectedSourceLanguage();
         var targetLanguage = GetSelectedTargetLanguage();
         ocrEngine = CreateOcrEngine(sourceLanguage, targetLanguage);
-        return new RealtimeTranslationPipeline(
+        var translationPipeline = new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
             ocrEngine,
             CreateTranslationService(options),
@@ -85,6 +85,8 @@ public partial class MainWindow : Window {
             GetSelectedPipelineOptions(),
             sourceLanguage
         );
+        translationPipeline.ChangedFrameTextDetected += RealtimeTranslationPipeline_ChangedFrameTextDetected;
+        return translationPipeline;
     }
 
     protected virtual IOcrEngine CreateOcrEngine(string sourceLanguage, string targetLanguage) {
@@ -117,6 +119,20 @@ public partial class MainWindow : Window {
 
     protected virtual void PaddleOcrEngine_StatusChanged(object? sender, PaddleOcrStatusChangedEventArgs e) {
         Dispatcher.InvokeAsync(() => AppendLog("PaddleOCR", e.Message));
+    }
+
+    protected virtual void RealtimeTranslationPipeline_ChangedFrameTextDetected(object? sender, ChangedFrameTextDetectedEventArgs e) {
+        Dispatcher.InvokeAsync(() => AppendChangedFrameTextLog(e.Regions));
+    }
+
+    protected virtual void AppendChangedFrameTextLog(IReadOnlyList<TextRegion> regions) {
+        var summary = string.Join("; ", regions.Select(CreateChangedFrameTextLogEntry));
+        AppendLog("DiffOCR", ShortenLogText(summary, 1_200), summary);
+    }
+
+    protected virtual string CreateChangedFrameTextLogEntry(TextRegion region) {
+        var bounds = $"{region.Bounds.X},{region.Bounds.Y} {region.Bounds.Width}x{region.Bounds.Height}";
+        return $"{bounds} conf={region.Confidence:0.##} text=\"{ShortenLogText(region.Text, 160)}\"";
     }
 
     protected virtual DispatcherTimer CreateTimer() {
@@ -240,6 +256,7 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Render(Array.Empty<TranslatedRegion>());
         overlayWindow.Hide();
+        ReleasePipeline();
         ReleasePaddleOcrEngine();
         ocrEngine = null;
         TranslationModelCombo.IsEnabled = true;
@@ -250,6 +267,15 @@ public partial class MainWindow : Window {
         SetRunningState(false);
         UpdateOcrStatus();
         SetStatus("Stopped.", "Pipeline");
+    }
+
+    protected virtual void ReleasePipeline() {
+        if (pipeline is null) {
+            return;
+        }
+
+        pipeline.ChangedFrameTextDetected -= RealtimeTranslationPipeline_ChangedFrameTextDetected;
+        pipeline = null;
     }
 
     protected virtual void ReleasePaddleOcrEngine() {
@@ -523,6 +549,7 @@ public partial class MainWindow : Window {
         }
 
         ReleasePaddleOcrEngine();
+        ReleasePipeline();
         overlayWindow.Close();
         base.OnClosed(e);
     }

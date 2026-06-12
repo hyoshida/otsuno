@@ -27,6 +27,8 @@ public class RealtimeTranslationPipeline {
     protected TranslationFrame? lastTranslationFrame;
     protected long frameIndex;
 
+    public event EventHandler<ChangedFrameTextDetectedEventArgs>? ChangedFrameTextDetected;
+
     public RealtimeTranslationPipeline(
         IScreenCaptureService captureService,
         IOcrEngine ocrEngine,
@@ -295,11 +297,23 @@ public class RealtimeTranslationPipeline {
             return null;
         }
 
+        ReportChangedFrameTextDetected(changedTextRegions);
         return await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
     }
 
     protected virtual bool HasDetectedText(IReadOnlyList<TextRegion> textRegions) {
         return textRegions.Any(region => !string.IsNullOrWhiteSpace(region.Text));
+    }
+
+    protected virtual void ReportChangedFrameTextDetected(IReadOnlyList<TextRegion> textRegions) {
+        var detectedRegions = textRegions
+            .Where(region => !string.IsNullOrWhiteSpace(region.Text))
+            .ToArray();
+        if (detectedRegions.Length == 0) {
+            return;
+        }
+
+        ChangedFrameTextDetected?.Invoke(this, new ChangedFrameTextDetectedEventArgs(detectedRegions));
     }
 
     protected virtual void UpdatePreviousFrameSnapshot(CapturedFrame frame) {
@@ -929,4 +943,8 @@ public record RealtimeTranslationPipelineOptions(
             _ => LowLatency
         };
     }
+}
+
+public class ChangedFrameTextDetectedEventArgs(IReadOnlyList<TextRegion> regions) : EventArgs {
+    public IReadOnlyList<TextRegion> Regions { get; } = regions;
 }
