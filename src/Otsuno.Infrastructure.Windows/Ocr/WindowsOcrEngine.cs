@@ -8,6 +8,8 @@ using Windows.Media.Ocr;
 namespace Otsuno.Infrastructure.Windows.Ocr;
 
 public class WindowsOcrEngine : IOcrEngine {
+    public const string DetectLanguage = "Detect language";
+
     protected static readonly IReadOnlyDictionary<string, string> OcrLanguageTags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         ["ja"] = "ja-JP",
         ["ko"] = "ko-KR",
@@ -24,10 +26,18 @@ public class WindowsOcrEngine : IOcrEngine {
     }
 
     public WindowsOcrEngine(string targetLanguage) {
-        engines = CreateSourceEngines(targetLanguage);
+        engines = CreateSourceEngines(DetectLanguage, targetLanguage);
     }
 
-    protected virtual IReadOnlyList<OcrEngine> CreateSourceEngines(string targetLanguage) {
+    public WindowsOcrEngine(string sourceLanguage, string targetLanguage) {
+        engines = CreateSourceEngines(sourceLanguage, targetLanguage);
+    }
+
+    protected virtual IReadOnlyList<OcrEngine> CreateSourceEngines(string sourceLanguage, string targetLanguage) {
+        if (!IsDetectLanguage(sourceLanguage)) {
+            return [CreateRequiredEngine(sourceLanguage)];
+        }
+
         if (!OcrLanguageTags.ContainsKey(targetLanguage)) {
             return [OcrEngine.TryCreateFromUserProfileLanguages()
                 ?? throw new InvalidOperationException("Windows OCR is not available for the current user languages.")];
@@ -46,6 +56,21 @@ public class WindowsOcrEngine : IOcrEngine {
         }
 
         return sourceEngines;
+    }
+
+    protected virtual bool IsDetectLanguage(string sourceLanguage) {
+        return string.Equals(sourceLanguage, DetectLanguage, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(sourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(sourceLanguage, "detect", StringComparison.OrdinalIgnoreCase);
+    }
+
+    protected virtual OcrEngine CreateRequiredEngine(string sourceLanguage) {
+        if (!OcrLanguageTags.TryGetValue(sourceLanguage, out var languageTag)) {
+            throw new InvalidOperationException($"Windows OCR source language '{sourceLanguage}' is not supported.");
+        }
+
+        return CreateEngineIfSupported(languageTag)
+            ?? throw new InvalidOperationException($"Windows OCR language '{languageTag}' is not installed. Install the Windows language pack or OCR language feature for '{languageTag}'.");
     }
 
     protected virtual OcrEngine? CreateEngineIfSupported(string languageTag) {

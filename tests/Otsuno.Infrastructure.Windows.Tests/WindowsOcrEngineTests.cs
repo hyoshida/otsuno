@@ -35,4 +35,20 @@ public class WindowsOcrEngineTests {
 
         Assert.Empty(regions);
     }
+
+    [Fact]
+    public async Task RecognizeAsyncSupportsExplicitSourceLanguageWhenInstalled() {
+        WindowsOcrEngine engine;
+        try {
+            engine = new WindowsOcrEngine("ja", "en");
+        } catch (InvalidOperationException) {
+            return;
+        }
+
+        var frame = new CapturedFrame("empty", 1, 1, DateTimeOffset.UtcNow, []);
+
+        var regions = await engine.RecognizeAsync(frame, CancellationToken.None);
+
+        Assert.Empty(regions);
+    }
 }

@@ -25,6 +25,15 @@
                     <ComboBoxItem Content="qwen2.5:1.5b" />
                     <ComboBoxItem Content="llama3.2:3b" />
                 </ComboBox>
+                <TextBlock Text="Source" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="SourceLanguageCombo" Width="128" SelectedIndex="0" Margin="0,0,12,0">
+                    <ComboBoxItem Content="Detect language" />
+                    <ComboBoxItem Content="ja" />
+                    <ComboBoxItem Content="en" />
+                    <ComboBoxItem Content="ko" />
+                    <ComboBoxItem Content="zh-Hans" />
+                    <ComboBoxItem Content="zh-Hant" />
+                </ComboBox>
                 <TextBlock Text="Target" Foreground="#A9B4C4" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="TargetLanguageCombo" Width="92" SelectedIndex="0" Margin="0,0,12,0">
                     <ComboBoxItem Content="ja" />

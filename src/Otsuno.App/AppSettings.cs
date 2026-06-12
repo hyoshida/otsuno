@@ -8,7 +8,8 @@ public record AppSettings(
     string TargetLanguage,
     double TranslationFrequency,
     bool DebugMode = false,
-    string PipelinePreset = "LowLatency"
+    string PipelinePreset = "LowLatency",
+    string SourceLanguage = "Detect language"
 ) {
     public static AppSettings Default { get; } = new("qwen2.5:1.5b", "ja", 3);
 }
