@@ -2,15 +2,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Otsuno.Core\Otsuno.Core.csproj" />
-    <ProjectReference Include="..\Otsuno.Infrastructure.Windows\Otsuno.Infrastructure.Windows.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
-    <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
 </Project>

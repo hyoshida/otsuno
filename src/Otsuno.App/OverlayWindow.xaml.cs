@@ -15,7 +15,19 @@ public partial class OverlayWindow : Window {
 
     public OverlayWindow() {
         InitializeComponent();
-        Loaded += (_, _) => EnableClickThrough();
+        Loaded += (_, _) => InitializeOverlayWindow();
+    }
+
+    protected virtual void InitializeOverlayWindow() {
+        FitToPrimaryScreen();
+        EnableClickThrough();
+    }
+
+    protected virtual void FitToPrimaryScreen() {
+        Left = 0;
+        Top = 0;
+        Width = SystemParameters.PrimaryScreenWidth;
+        Height = SystemParameters.PrimaryScreenHeight;
     }
 
     public virtual void Render(IReadOnlyList<TranslatedRegion> regions) {

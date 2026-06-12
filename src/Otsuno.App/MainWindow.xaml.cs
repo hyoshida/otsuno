@@ -1,14 +1,20 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
-using Otsuno.Core.Demo;
 using Otsuno.Core.Models;
 using Otsuno.Core.Pipeline;
 using Otsuno.Core.Services;
+using Otsuno.Infrastructure.Windows.Capture;
+using Otsuno.Infrastructure.Windows.Ocr;
+using Otsuno.Infrastructure.Windows.Translation;
 
 namespace Otsuno.App;
 
 public partial class MainWindow : Window {
+    protected static readonly Brush NormalStatusBrush = new SolidColorBrush(Color.FromRgb(215, 222, 233));
+    protected static readonly Brush ErrorStatusBrush = new SolidColorBrush(Color.FromRgb(255, 104, 104));
+
     protected readonly DispatcherTimer timer;
     protected readonly RealtimeTranslationPipeline pipeline;
     protected readonly OverlayWindow overlayWindow;
@@ -27,9 +33,9 @@ public partial class MainWindow : Window {
 
     protected virtual RealtimeTranslationPipeline CreatePipeline() {
         return new RealtimeTranslationPipeline(
-            new DemoScreenCaptureService(),
-            new DemoOcrEngine(),
-            new DemoTranslationService(),
+            new PrimaryScreenCaptureService(),
+            new WindowsOcrEngine(),
+            new OllamaTranslationService(),
             new InMemoryTranslationCache()
         );
     }
@@ -61,17 +67,16 @@ public partial class MainWindow : Window {
         var targetLanguage = GetSelectedTargetLanguage();
         var frame = await pipeline.ProcessOnceAsync(targetLanguage, cancellationToken);
         RenderFrame(frame);
-        StatusText.Text = $"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.";
+        SetStatus($"Processed {frame.Regions.Count} regions at {DateTime.Now:T}.");
     }
 
     protected virtual void HandlePipelineError(Exception exception) {
-        StatusText.Text = $"Pipeline error: {exception.Message}";
-        Stop();
+        SetErrorStatus($"Pipeline error: {exception.Message}");
     }
 
     protected virtual void StartButton_Click(object sender, RoutedEventArgs e) {
         Start();
-        StatusText.Text = "Running demo pipeline.";
+        SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
     }
 
     protected virtual void StopButton_Click(object sender, RoutedEventArgs e) {
@@ -88,7 +93,17 @@ public partial class MainWindow : Window {
         timer.Stop();
         overlayWindow.Hide();
         SetRunningState(false);
-        StatusText.Text = "Stopped.";
+        SetStatus("Stopped.");
+    }
+
+    protected virtual void SetStatus(string message) {
+        StatusText.Foreground = NormalStatusBrush;
+        StatusText.Text = message;
+    }
+
+    protected virtual void SetErrorStatus(string message) {
+        StatusText.Foreground = ErrorStatusBrush;
+        StatusText.Text = message;
     }
 
     protected virtual void SetRunningState(bool isRunning) {

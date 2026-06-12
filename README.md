@@ -11,6 +11,7 @@ The current foundation is a C#/.NET Windows desktop application.
 
 - `src/Otsuno.App`: WPF app shell and transparent overlay prototype.
 - `src/Otsuno.Core`: capture/OCR/translation abstractions, translation pipeline, cache, and demo services.
+- `src/Otsuno.Infrastructure.Windows`: Windows screen capture, Windows OCR, and Ollama-compatible local translation implementations.
 
 Build:
 
@@ -24,4 +25,11 @@ Run the app:
 dotnet run --project src/Otsuno.App/Otsuno.App.csproj
 ```
 
-The initial app uses demo capture, OCR, and translation services so the pipeline can run before Windows Graphics Capture, PaddleOCR, and the local LLM runtime are integrated.
+The app currently uses real primary-screen capture, Windows OCR, and an Ollama-compatible local translation endpoint.
+
+Current translation backend:
+
+- Endpoint: `http://localhost:11434`
+- Default model: `llama3.2:3b`
+
+This is the first real integration path. The product direction remains app-managed local models, so the Ollama dependency should later be replaced or wrapped by a bundled `llama.cpp`/GGUF runtime.
