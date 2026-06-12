@@ -204,6 +204,59 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceMergesOverlappingSimilarOcrRegions() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("first", "Victory", new ScreenRect(100, 100, 120, 24), 0.85),
+            new TextRegion("second", "Vict0ry", new ScreenRect(103, 98, 118, 26), 0.9),
+            new TextRegion("separate", "Continue", new ScreenRect(100, 150, 120, 24), 0.9),
+        };
+        var translator = new CountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            translator,
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Collection(
+            frame.Regions,
+            region => {
+                Assert.Contains("first", region.RegionId);
+                Assert.Contains("second", region.RegionId);
+                Assert.Equal("Victory", region.SourceText);
+            },
+            region => Assert.Equal("separate", region.RegionId)
+        );
+        Assert.Equal(2, translator.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessOnceKeepsOverlappingDissimilarShortRegionsSeparate() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("hp", "HP", new ScreenRect(100, 100, 30, 18), 0.9),
+            new TextRegion("mp", "MP", new ScreenRect(102, 99, 30, 18), 0.9),
+        };
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            new CountingTranslationService(),
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Collection(
+            frame.Regions,
+            region => Assert.Equal("mp", region.RegionId),
+            region => Assert.Equal("hp", region.RegionId)
+        );
+    }
+
+    [Fact]
     public async Task LowLatencyModeQueuesUncachedTranslationWithoutBlockingFrame() {
         var capture = new CapturedFrame("test", 100, 100, DateTimeOffset.UtcNow, []);
         var regions = new[] {

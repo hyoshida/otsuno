@@ -9,6 +9,9 @@ namespace Otsuno.Core.Pipeline;
 public class RealtimeTranslationPipeline {
     protected const int StableBoundsSnapThreshold = 8;
     protected const double SameLineVerticalOverlapRatio = 0.55;
+    protected const double DuplicateRegionOverlapRatio = 0.65;
+    protected const int MaxDuplicateTextDistance = 2;
+    protected const double MaxDuplicateTextDistanceRatio = 0.25;
 
     protected readonly IScreenCaptureService captureService;
     protected readonly IOcrEngine ocrEngine;
@@ -191,11 +194,78 @@ public class RealtimeTranslationPipeline {
     }
 
     protected virtual IEnumerable<TextRegion> SelectTextRegions(IReadOnlyList<TextRegion> textRegions) {
-        return CreateTextBlocks(textRegions.Where(IsTranslationCandidate))
+        return DeduplicateOverlappingTextRegions(CreateTextBlocks(textRegions.Where(IsTranslationCandidate)))
             .Where(IsTranslationCandidate)
             .OrderBy(region => region.Bounds.Y)
             .ThenBy(region => region.Bounds.X)
             .Take(options.MaxTextRegionsPerFrame);
+    }
+
+    protected virtual IReadOnlyList<TextRegion> DeduplicateOverlappingTextRegions(IEnumerable<TextRegion> textRegions) {
+        var regions = textRegions
+            .OrderByDescending(region => region.Confidence)
+            .ThenByDescending(region => NormalizeStableText(region.Text).Length)
+            .ToArray();
+        var deduplicated = new List<TextRegion>();
+
+        foreach (var region in regions) {
+            var index = deduplicated.FindIndex(existing => IsDuplicateTextRegion(existing, region));
+            if (index < 0) {
+                deduplicated.Add(region);
+            } else {
+                deduplicated[index] = MergeDuplicateTextRegion(deduplicated[index], region);
+            }
+        }
+
+        return deduplicated;
+    }
+
+    protected virtual bool IsDuplicateTextRegion(TextRegion first, TextRegion second) {
+        return GetOverlapRatio(first.Bounds, second.Bounds) >= DuplicateRegionOverlapRatio
+            && AreDuplicateTextsSimilar(first.Text, second.Text);
+    }
+
+    protected virtual bool AreDuplicateTextsSimilar(string first, string second) {
+        var normalizedFirst = NormalizeStableText(first);
+        var normalizedSecond = NormalizeStableText(second);
+        if (normalizedFirst.Length == 0 || normalizedSecond.Length == 0) {
+            return false;
+        }
+
+        var minimumLength = Math.Min(normalizedFirst.Length, normalizedSecond.Length);
+        if (minimumLength >= 4
+            && (normalizedFirst.Contains(normalizedSecond, StringComparison.OrdinalIgnoreCase)
+                || normalizedSecond.Contains(normalizedFirst, StringComparison.OrdinalIgnoreCase))) {
+            return true;
+        }
+
+        var maxLength = Math.Max(normalizedFirst.Length, normalizedSecond.Length);
+        var distance = GetTextDistance(normalizedFirst, normalizedSecond);
+        return distance <= MaxDuplicateTextDistance
+            && distance <= maxLength * MaxDuplicateTextDistanceRatio;
+    }
+
+    protected virtual TextRegion MergeDuplicateTextRegion(TextRegion first, TextRegion second) {
+        var text = ChooseDuplicateText(first, second);
+        var bounds = GetBounds([first, second]);
+        var confidence = Math.Max(first.Confidence, second.Confidence);
+        return new TextRegion($"{first.Id}+{second.Id}", text, bounds, confidence);
+    }
+
+    protected virtual string ChooseDuplicateText(TextRegion first, TextRegion second) {
+        var firstLength = NormalizeStableText(first.Text).Length;
+        var secondLength = NormalizeStableText(second.Text).Length;
+        if (firstLength != secondLength) {
+            return firstLength > secondLength ? first.Text : second.Text;
+        }
+
+        var firstLetterCount = first.Text.Count(char.IsLetter);
+        var secondLetterCount = second.Text.Count(char.IsLetter);
+        if (firstLetterCount != secondLetterCount) {
+            return firstLetterCount > secondLetterCount ? first.Text : second.Text;
+        }
+
+        return first.Confidence >= second.Confidence ? first.Text : second.Text;
     }
 
     protected virtual IReadOnlyList<TextRegion> StabilizeTextRegions(IEnumerable<TextRegion> textRegions) {
@@ -219,6 +289,7 @@ public class RealtimeTranslationPipeline {
 
     protected virtual StableTextRegion? FindStableRegion(TextRegion region) {
         return stableRegions
+            .Where(stableRegion => stableRegion.LastSeenFrame < frameIndex)
             .Where(stableRegion => IsStableRegionMatch(stableRegion.Region, region))
             .OrderByDescending(stableRegion => GetIntersectionArea(stableRegion.Region.Bounds, region.Bounds))
             .ThenBy(stableRegion => GetTextDistance(NormalizeStableText(stableRegion.Region.Text), NormalizeStableText(region.Text)))
@@ -294,6 +365,15 @@ public class RealtimeTranslationPipeline {
         var right = Math.Min(first.X + first.Width, second.X + second.Width);
         var bottom = Math.Min(first.Y + first.Height, second.Y + second.Height);
         return Math.Max(0, right - left) * Math.Max(0, bottom - top);
+    }
+
+    protected virtual double GetOverlapRatio(ScreenRect first, ScreenRect second) {
+        var minimumArea = Math.Min(GetArea(first), GetArea(second));
+        return minimumArea <= 0 ? 0 : (double)GetIntersectionArea(first, second) / minimumArea;
+    }
+
+    protected virtual int GetArea(ScreenRect bounds) {
+        return Math.Max(0, bounds.Width) * Math.Max(0, bounds.Height);
     }
 
     protected virtual string NormalizeStableText(string text) {
