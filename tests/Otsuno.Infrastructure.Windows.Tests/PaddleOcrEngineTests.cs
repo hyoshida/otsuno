@@ -95,6 +95,29 @@ public class PaddleOcrEngineTests {
         Assert.Equal("utf-8", startInfo.Environment["PYTHONIOENCODING"]);
     }
 
+    [Fact]
+    public void ReportLanguageLoadPlanReportsSingleLanguageModel() {
+        var messages = new List<string>();
+        var engine = new LanguagePlanPaddleOcrEngine("en", "ja");
+        engine.StatusChanged += (_, e) => messages.Add(e.Message);
+
+        engine.ReportPlan();
+
+        Assert.Contains(messages, message => message.Contains("one language model: en"));
+    }
+
+    [Fact]
+    public void ReportLanguageLoadPlanReportsDetectLanguageModelCount() {
+        var messages = new List<string>();
+        var engine = new LanguagePlanPaddleOcrEngine("Detect language", "ja");
+        engine.StatusChanged += (_, e) => messages.Add(e.Message);
+
+        engine.ReportPlan();
+
+        Assert.Contains(messages, message => message.Contains("detect-language mode will load 4 language models"));
+        Assert.Contains(messages, message => message.Contains("Select a specific Source language"));
+    }
+
     protected class TestPaddleOcrEngine(string pythonPath, string dedicatedPythonPath) : PaddleOcrEngine("en", "ja", pythonPath, "bridge.py") {
         public Dictionary<string, bool> DependencyResults { get; } = [];
         public List<string> InstallTargets { get; } = [];
@@ -131,6 +154,12 @@ public class PaddleOcrEngineTests {
 
         protected override ProcessResult RunPythonCommand(string executablePath, string arguments, TimeSpan? timeout = null) {
             return new ProcessResult(0, string.Empty, string.Empty);
+        }
+    }
+
+    protected class LanguagePlanPaddleOcrEngine(string sourceLanguage, string targetLanguage) : PaddleOcrEngine(sourceLanguage, targetLanguage, "python", "bridge.py") {
+        public void ReportPlan() {
+            ReportLanguageLoadPlan();
         }
     }
 }

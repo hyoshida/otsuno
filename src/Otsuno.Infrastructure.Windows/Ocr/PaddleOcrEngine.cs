@@ -137,6 +137,7 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
             throw new FileNotFoundException("PaddleOCR bridge script was not found.", bridgePath);
         }
 
+        ReportLanguageLoadPlan();
         EnsureDependenciesInstalled();
         process?.Dispose();
         ClearBridgeErrorLog();
@@ -372,6 +373,15 @@ public class PaddleOcrEngine : IOcrEngine, IOcrBackendStatus, IDisposable {
 
     protected virtual ProcessResult RunPythonCommand(string arguments, TimeSpan? timeout = null) {
         return RunPythonCommand(activePythonPath, arguments, timeout);
+    }
+
+    protected virtual void ReportLanguageLoadPlan() {
+        if (languages.Count <= 1) {
+            ReportStatus($"PaddleOCR will load one language model: {languages[0]}.");
+            return;
+        }
+
+        ReportStatus($"PaddleOCR detect-language mode will load {languages.Count} language models: {string.Join(", ", languages)}. Select a specific Source language for faster startup.");
     }
 
     protected virtual void ConfigurePythonEnvironment(ProcessStartInfo startInfo) {
