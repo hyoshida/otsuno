@@ -43,12 +43,12 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
             var responses = requests
                 .Select((request, index) => CreateTranslationResponse(request, translatedTexts[index]))
                 .ToArray();
-            if (responses.All(response => !ContainsSourceText(response))) {
+            if (responses.All(response => !ShouldRetryTranslation(response))) {
                 return responses;
             }
         }
 
-        throw new InvalidOperationException("Ollama returned untranslated source text.");
+        throw new InvalidOperationException("Ollama returned untranslated or wrong-language text.");
     }
 
     protected virtual async Task<IReadOnlyList<string>> GenerateTranslatedTextsAsync(
@@ -108,6 +108,37 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
         var sourceText = NormalizeComparableText(response.SourceText);
         var translatedText = NormalizeComparableText(response.TranslatedText);
         return sourceText.Length > 0 && translatedText.Contains(sourceText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    protected virtual bool ShouldRetryTranslation(TranslationResponse response) {
+        return ContainsSourceText(response) || !LooksLikeTargetLanguage(response);
+    }
+
+    protected virtual bool LooksLikeTargetLanguage(TranslationResponse response) {
+        return response.TargetLanguage.ToLowerInvariant() switch {
+            "en" => LooksLikeEnglishTranslation(response),
+            _ => true
+        };
+    }
+
+    protected virtual bool LooksLikeEnglishTranslation(TranslationResponse response) {
+        if (LooksMostlyNonTranslatable(response.SourceText)) {
+            return true;
+        }
+
+        var translatedText = response.TranslatedText.Trim();
+        var letterCount = translatedText.Count(char.IsLetter);
+        if (letterCount == 0) {
+            return true;
+        }
+
+        var latinLetterCount = translatedText.Count(IsLatinLetter);
+        return latinLetterCount > 0 && latinLetterCount >= letterCount * 0.6;
+    }
+
+    protected virtual bool IsLatinLetter(char character) {
+        return character is >= 'A' and <= 'Z'
+            || character is >= 'a' and <= 'z';
     }
 
     protected virtual bool LooksMostlyNonTranslatable(string text) {

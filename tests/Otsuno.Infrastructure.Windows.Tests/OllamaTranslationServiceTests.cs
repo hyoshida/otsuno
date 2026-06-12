@@ -144,6 +144,49 @@ public class OllamaTranslationServiceTests {
     }
 
     [Fact]
+    public async Task TranslateAsyncRetriesWhenEnglishTargetDoesNotLookEnglish() {
+        var handler = new StubHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "ゲームを開始" } } }) })
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "Start the game" } } }) })
+            }
+        );
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("ゲームを開始", "auto", "en");
+
+        var response = await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Equal("Start the game", response.TranslatedText);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task TranslateAsyncAcceptsEnglishTargetWithMostlyLatinLetters() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "Start Quest 2" }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("クエスト2を開始", "auto", "en");
+
+        var response = await service.TranslateAsync(request, CancellationToken.None);
+
+        Assert.Equal("Start Quest 2", response.TranslatedText);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task TranslateBatchAsyncPostsSingleGenerateRequestForMultipleTexts() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
             Content = JsonContent(new {
