@@ -63,13 +63,10 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     }
 
     protected virtual string CreatePrompt(IReadOnlyList<TranslationRequest> requests) {
-        var targetLanguage = GetTargetLanguageName(requests[0].TargetLanguage);
+        var targetLanguage = GetTargetLanguagePrompt(requests[0].TargetLanguage);
         return string.Join(
             Environment.NewLine,
-            "You are a game UI translator.",
-            $"Translate every source text into natural {targetLanguage}.",
-            "Preserve names, numbers, hotkeys, controller buttons, and file paths.",
-            "Do not explain, apologize, repeat these instructions, or include the source text unless it is already the best translation.",
+            targetLanguage.Instructions,
             "Return valid JSON only with this exact shape:",
             "{\"translations\":[{\"id\":\"t0\",\"translatedText\":\"...\"}]}",
             "Source texts:",
@@ -198,14 +195,26 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
             || text.Contains("Please provide", StringComparison.OrdinalIgnoreCase);
     }
 
-    protected virtual string GetTargetLanguageName(string targetLanguage) {
+    protected virtual TargetLanguagePrompt GetTargetLanguagePrompt(string targetLanguage) {
         return targetLanguage.ToLowerInvariant() switch {
-            "ja" => "日本語",
-            "en" => "English",
-            "ko" => "한국어",
-            "zh-hans" => "繁体字",
-            "zh-hant" => "簡体字",
-            _ => targetLanguage
+            "ja" => new TargetLanguagePrompt(
+                "すべての Source texts を自然な日本語に翻訳してください。名前、数字、ホットキー、コントローラーのボタン、ファイルパスはそのままにしてください。日本語以外のテキストは出力しないでください。"
+            ),
+            "en" => new TargetLanguagePrompt(
+                "Translate every source texts into natural English. Preserve names, numbers, hotkeys, controller buttons, and file paths. Do not output any text other than English."
+            ),
+            "ko" => new TargetLanguagePrompt(
+                "모든 소스 텍스트를 자연스러운 한국어로 번역하세요. 이름, 숫자, 단축키, 컨트롤러 버튼 및 파일 경로는 그대로 유지하세요. 한국어 이외의 텍스트는 출력하지 마세요."
+            ),
+            "zh-hans" => new TargetLanguagePrompt(
+                "将所有源文本翻译成简体中文。保留名称、数字、快捷键、控制器按钮和文件路径。不要输出除简体中文以外的文本。"
+            ),
+            "zh-hant" => new TargetLanguagePrompt(
+                "將所有源文本翻譯成繁體中文。保留名稱、數字、快捷鍵、控制器按鈕和文件路徑。不要輸出除繁體中文以外的文本。"
+            ),
+            _ => new TargetLanguagePrompt(
+                $"Translate into {targetLanguage} only. Do not output a different language."
+            )
         };
     }
 
@@ -229,6 +238,8 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
     protected record OllamaGenerateOptions([property: JsonPropertyName("temperature")] double Temperature);
 
     protected record OllamaGenerateResponse([property: JsonPropertyName("response")] string Response);
+
+    protected record TargetLanguagePrompt(string Instructions);
 
     protected record OllamaPromptItem(
         [property: JsonPropertyName("id")] string Id,

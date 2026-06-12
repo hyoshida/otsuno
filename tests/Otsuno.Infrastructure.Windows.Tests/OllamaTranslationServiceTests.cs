@@ -38,9 +38,11 @@ public class OllamaTranslationServiceTests {
 
     [Theory]
     [InlineData("ja", "日本語")]
-    [InlineData("zh-Hans", "繁体字")]
-    [InlineData("zh-Hant", "簡体字")]
-    public async Task TranslateAsyncUsesTargetLanguageDisplayText(string targetLanguage, string expectedText) {
+    [InlineData("en", "English")]
+    [InlineData("ko", "한국어")]
+    [InlineData("zh-Hans", "简体中文")]
+    [InlineData("zh-Hant", "繁體中文")]
+    public async Task TranslateAsyncUsesTargetLanguagePrompt(string targetLanguage, string expectedName) {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
             Content = JsonContent(new { response = JsonSerializer.Serialize(new { translatedText = "translated" }) })
         });
@@ -54,7 +56,8 @@ public class OllamaTranslationServiceTests {
 
         await service.TranslateAsync(request, CancellationToken.None);
 
-        Assert.Contains(expectedText, ReadPrompt(handler.RequestContent));
+        var prompt = ReadPrompt(handler.RequestContent);
+        Assert.Contains(expectedName, prompt);
     }
 
     [Fact]
