@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Otsuno.App/Otsuno.App.csproj" />
+    <Project Path="src/Otsuno.Core/Otsuno.Core.csproj" />
+  </Folder>
+</Solution>

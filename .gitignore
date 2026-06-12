@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+.vscode/.ropeproject/
+TestResults/
+*.user
+*.suo
+*.rsuser

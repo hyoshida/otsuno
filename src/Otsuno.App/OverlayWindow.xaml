@@ -1,0 +1,14 @@
+<Window x:Class="Otsuno.App.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Otsuno Overlay"
+        Width="1920"
+        Height="1080"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize">
+    <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" />
+</Window>
