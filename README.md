@@ -5,6 +5,40 @@ Our goal is to make it easy for anyone to play multilingual games without any ex
 
 See [DESIGN.md](DESIGN.md) for the initial requirements, architecture, technology choices, and development roadmap.
 
+## Installation
+
+Otsuno currently runs as a Windows desktop app built with .NET.
+
+1. Install the [.NET SDK](https://dotnet.microsoft.com/download).
+2. Clone this repository.
+3. Build the solution:
+
+```bash
+dotnet build Otsuno.slnx
+```
+
+4. Run the app:
+
+```bash
+dotnet run --project src/Otsuno.App/Otsuno.App.csproj
+```
+
+The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
+
+### PaddleOCR setup
+
+Otsuno first checks whether the configured Python environment can import `paddleocr` and `paddle`. By default it checks `python`; set `OTSUNO_PYTHON` to use a specific executable. If PaddleOCR is not available there, Otsuno creates a dedicated virtual environment under `%LOCALAPPDATA%\Otsuno\Python\paddleocr-venv` and installs `paddleocr` plus the CPU `paddlepaddle` package there. When no compatible Python is found, Otsuno attempts to install Python 3.11 for the current user with `winget` before creating the venv. If PaddleOCR cannot be installed or started, Otsuno falls back to Windows OCR.
+
+### Translation backend
+
+- Endpoint: `http://localhost:11434`
+- Default model: `qwen2.5:1.5b`
+- Optional model: `llama3.2:3b`
+
+On Windows, the app checks the Ollama runtime before the first translation request. If Ollama is not installed, it attempts to install the official `Ollama.Ollama` package with `winget`, starts the local server, and pulls the default model.
+
+This is the first real integration path. The product direction remains app-managed local models, so the Ollama dependency should later be replaced or wrapped by a bundled `llama.cpp`/GGUF runtime.
+
 ## Development
 
 The current foundation is a C#/.NET Windows desktop application.
@@ -45,19 +79,3 @@ dotnet test tests/Otsuno.Infrastructure.Windows.Tests/Otsuno.Infrastructure.Wind
 ```
 
 The test suite uses xUnit. `Otsuno.Core.Tests` covers the translation cache and realtime translation pipeline. `Otsuno.Infrastructure.Windows.Tests` covers Windows infrastructure behavior that can be tested without requiring a live game, OCR target window, or Ollama server.
-
-The app currently uses real primary-screen capture, PaddleOCR with Windows OCR fallback, and an Ollama-compatible local translation endpoint.
-
-PaddleOCR setup:
-
-Otsuno first checks whether the configured Python environment can import `paddleocr` and `paddle`. By default it checks `python`; set `OTSUNO_PYTHON` to use a specific executable. If PaddleOCR is not available there, Otsuno creates a dedicated virtual environment under `%LOCALAPPDATA%\Otsuno\Python\paddleocr-venv` and installs `paddleocr` plus the CPU `paddlepaddle` package there. When no compatible Python is found, Otsuno attempts to install Python 3.11 for the current user with `winget` before creating the venv. If PaddleOCR cannot be installed or started, Otsuno falls back to Windows OCR.
-
-Current translation backend:
-
-- Endpoint: `http://localhost:11434`
-- Default model: `qwen2.5:1.5b`
-- Optional model: `llama3.2:3b`
-
-On Windows, the app checks the Ollama runtime before the first translation request. If Ollama is not installed, it attempts to install the official `Ollama.Ollama` package with `winget`, starts the local server, and pulls the default model.
-
-This is the first real integration path. The product direction remains app-managed local models, so the Ollama dependency should later be replaced or wrapped by a bundled `llama.cpp`/GGUF runtime.
