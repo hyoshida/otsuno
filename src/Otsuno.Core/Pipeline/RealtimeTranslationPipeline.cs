@@ -78,15 +78,18 @@ public class RealtimeTranslationPipeline {
             return new TranslationFrame(DateTimeOffset.UtcNow, Array.Empty<TranslatedRegion>());
         }
 
-        if (ShouldSkipOcr(frame)) {
-            UpdatePreviousFrameSnapshot(frame);
+        var ocrFrames = CreateOcrFrames(frame);
+        UpdatePreviousFrameSnapshot(frame);
+        if (ocrFrames.Count == 0) {
             return CreateSkippedFrame(frame);
         }
 
-        UpdatePreviousFrameSnapshot(frame);
         var ocrStopwatch = Stopwatch.StartNew();
-        var textRegions = await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
+        var textRegions = await RecognizeTextRegionsAsync(frame, ocrFrames, cancellationToken).ConfigureAwait(false);
         ocrStopwatch.Stop();
+        if (textRegions is null) {
+            return CreateSkippedFrame(frame);
+        }
 
         var entries = new List<TranslationEntry>();
         var uncachedRequests = new List<TranslationRequest>();
@@ -134,11 +137,24 @@ public class RealtimeTranslationPipeline {
         return translationFrame;
     }
 
-    protected virtual bool ShouldSkipOcr(CapturedFrame frame) {
-        return options.MinOcrFrameChangeRatio > 0
-            && previousFrameSnapshot is not null
-            && CanCompareFrame(frame, previousFrameSnapshot)
-            && GetChangedPixelRatio(frame.PixelData!, previousFrameSnapshot.PixelData) <= options.MinOcrFrameChangeRatio;
+    protected virtual IReadOnlyList<OcrFrame> CreateOcrFrames(CapturedFrame frame) {
+        if (previousFrameSnapshot is null || !CanCompareFrame(frame, previousFrameSnapshot)) {
+            return [new OcrFrame(frame, IsFullFrame: true)];
+        }
+
+        if (!HasChangedPixels(frame.PixelData!, previousFrameSnapshot.PixelData)) {
+            return [];
+        }
+
+        var regions = GetChangedPixelRegions(frame, previousFrameSnapshot);
+        if (regions.Count == 0) {
+            return [];
+        }
+
+        return regions
+            .Take(options.MaxChangedRegionsPerFrame)
+            .Select(region => new OcrFrame(CreateCroppedFrame(frame, region)))
+            .ToArray();
     }
 
     protected virtual bool CanCompareFrame(CapturedFrame frame, FrameSnapshot snapshot) {
@@ -149,23 +165,141 @@ public class RealtimeTranslationPipeline {
             && snapshot.Height == frame.Height;
     }
 
-    protected virtual double GetChangedPixelRatio(byte[] currentPixels, byte[] previousPixels) {
-        var pixelCount = currentPixels.Length / 4;
-        if (pixelCount == 0) {
-            return 1;
-        }
-
-        var changedPixels = 0;
+    protected virtual bool HasChangedPixels(byte[] currentPixels, byte[] previousPixels) {
         for (var index = 0; index + 3 < currentPixels.Length; index += 4) {
             if (currentPixels[index] != previousPixels[index]
                 || currentPixels[index + 1] != previousPixels[index + 1]
                 || currentPixels[index + 2] != previousPixels[index + 2]
                 || currentPixels[index + 3] != previousPixels[index + 3]) {
-                changedPixels++;
+                return true;
             }
         }
 
-        return (double)changedPixels / pixelCount;
+        return false;
+    }
+
+    protected virtual IReadOnlyList<ScreenRect> GetChangedPixelRegions(CapturedFrame frame, FrameSnapshot snapshot) {
+        var visited = new bool[frame.Width * frame.Height];
+        var regions = new List<ScreenRect>();
+        for (var y = 0; y < frame.Height; y++) {
+            for (var x = 0; x < frame.Width; x++) {
+                var pixelIndex = y * frame.Width + x;
+                if (visited[pixelIndex] || !IsChangedPixel(frame.PixelData!, snapshot.PixelData, pixelIndex)) {
+                    visited[pixelIndex] = true;
+                    continue;
+                }
+
+                regions.Add(ExpandChangedRegion(FindChangedRegion(frame, snapshot, visited, x, y), frame.Width, frame.Height));
+            }
+        }
+
+        return regions
+            .Where(region => !region.IsEmpty)
+            .OrderByDescending(GetArea)
+            .ToArray();
+    }
+
+    protected virtual ScreenRect FindChangedRegion(CapturedFrame frame, FrameSnapshot snapshot, bool[] visited, int startX, int startY) {
+        var queue = new Queue<int>();
+        var startIndex = startY * frame.Width + startX;
+        visited[startIndex] = true;
+        queue.Enqueue(startIndex);
+
+        var left = startX;
+        var top = startY;
+        var right = startX;
+        var bottom = startY;
+        while (queue.Count > 0) {
+            var pixelIndex = queue.Dequeue();
+            var x = pixelIndex % frame.Width;
+            var y = pixelIndex / frame.Width;
+            left = Math.Min(left, x);
+            top = Math.Min(top, y);
+            right = Math.Max(right, x);
+            bottom = Math.Max(bottom, y);
+
+            EnqueueChangedNeighbor(frame, snapshot, visited, queue, x - 1, y);
+            EnqueueChangedNeighbor(frame, snapshot, visited, queue, x + 1, y);
+            EnqueueChangedNeighbor(frame, snapshot, visited, queue, x, y - 1);
+            EnqueueChangedNeighbor(frame, snapshot, visited, queue, x, y + 1);
+        }
+
+        return new ScreenRect(left, top, right - left + 1, bottom - top + 1);
+    }
+
+    protected virtual void EnqueueChangedNeighbor(
+        CapturedFrame frame,
+        FrameSnapshot snapshot,
+        bool[] visited,
+        Queue<int> queue,
+        int x,
+        int y) {
+        if (x < 0 || y < 0 || x >= frame.Width || y >= frame.Height) {
+            return;
+        }
+
+        var pixelIndex = y * frame.Width + x;
+        if (visited[pixelIndex]) {
+            return;
+        }
+
+        visited[pixelIndex] = true;
+        if (IsChangedPixel(frame.PixelData!, snapshot.PixelData, pixelIndex)) {
+            queue.Enqueue(pixelIndex);
+        }
+    }
+
+    protected virtual bool IsChangedPixel(byte[] currentPixels, byte[] previousPixels, int pixelIndex) {
+        var index = pixelIndex * 4;
+        return currentPixels[index] != previousPixels[index]
+            || currentPixels[index + 1] != previousPixels[index + 1]
+            || currentPixels[index + 2] != previousPixels[index + 2]
+            || currentPixels[index + 3] != previousPixels[index + 3];
+    }
+
+    protected virtual ScreenRect ExpandChangedRegion(ScreenRect region, int frameWidth, int frameHeight) {
+        var padding = Math.Max(0, options.ChangedRegionPadding);
+        var left = Math.Max(0, region.X - padding);
+        var top = Math.Max(0, region.Y - padding);
+        var right = Math.Min(frameWidth, region.X + region.Width + padding);
+        var bottom = Math.Min(frameHeight, region.Y + region.Height + padding);
+        return new ScreenRect(left, top, right - left, bottom - top);
+    }
+
+    protected virtual CapturedFrame CreateCroppedFrame(CapturedFrame frame, ScreenRect region) {
+        var pixels = new byte[region.Width * region.Height * 4];
+        for (var y = 0; y < region.Height; y++) {
+            var sourceIndex = ((region.Y + y) * frame.Width + region.X) * 4;
+            var targetIndex = y * region.Width * 4;
+            Array.Copy(frame.PixelData!, sourceIndex, pixels, targetIndex, region.Width * 4);
+        }
+
+        return new CapturedFrame(frame.SourceId, region.Width, region.Height, frame.CapturedAt, pixels);
+    }
+
+    protected virtual async Task<IReadOnlyList<TextRegion>?> RecognizeTextRegionsAsync(
+        CapturedFrame frame,
+        IReadOnlyList<OcrFrame> ocrFrames,
+        CancellationToken cancellationToken) {
+        if (ocrFrames.Count == 1 && ocrFrames[0].IsFullFrame) {
+            return await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
+        }
+
+        var changedTextRegions = new List<TextRegion>();
+        foreach (var ocrFrame in ocrFrames) {
+            var regions = await ocrEngine.RecognizeAsync(ocrFrame.Frame, cancellationToken).ConfigureAwait(false);
+            changedTextRegions.AddRange(regions);
+        }
+
+        if (!HasDetectedText(changedTextRegions)) {
+            return null;
+        }
+
+        return await ocrEngine.RecognizeAsync(frame, cancellationToken).ConfigureAwait(false);
+    }
+
+    protected virtual bool HasDetectedText(IReadOnlyList<TextRegion> textRegions) {
+        return textRegions.Any(region => !string.IsNullOrWhiteSpace(region.Text));
     }
 
     protected virtual void UpdatePreviousFrameSnapshot(CapturedFrame frame) {
@@ -678,6 +812,8 @@ public class RealtimeTranslationPipeline {
     }
 
     protected record FrameSnapshot(string SourceId, int Width, int Height, byte[] PixelData);
+
+    protected record OcrFrame(CapturedFrame Frame, bool IsFullFrame = false);
 }
 
 public record RealtimeTranslationPipelineOptions(
@@ -698,7 +834,8 @@ public record RealtimeTranslationPipelineOptions(
     int MaxStableTextDistance,
     double MaxStableTextDistanceRatio,
     double StableRegionSmoothingRatio,
-    double MinOcrFrameChangeRatio = 0.1
+    int ChangedRegionPadding = 24,
+    int MaxChangedRegionsPerFrame = 8
 ) {
     public const string LowLatencyPreset = "LowLatency";
     public const string BalancedPreset = "Balanced";

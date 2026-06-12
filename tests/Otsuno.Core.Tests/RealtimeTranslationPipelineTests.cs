@@ -67,7 +67,7 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
-    public async Task ProcessOnceSkipsOcrWhenFrameChangeRatioIsBelowThreshold() {
+    public async Task ProcessOnceSkipsOcrWhenFrameHasNoPixelChanges() {
         var frames = new[] {
             new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow, [0, 0, 0, 255]),
             new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow.AddMilliseconds(100), [0, 0, 0, 255]),
@@ -91,25 +91,72 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
-    public async Task ProcessOnceRunsOcrWhenFrameChangeRatioExceedsThreshold() {
+    public async Task ProcessOnceRunsFullFrameOcrAfterChangedFrameRegionDetectsText() {
+        var previousPixels = new byte[2 * 2 * 4];
+        var currentPixels = previousPixels.ToArray();
+        currentPixels[(1 * 2 + 1) * 4] = 255;
         var frames = new[] {
-            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow, [0, 0, 0, 255]),
-            new CapturedFrame("test", 1, 1, DateTimeOffset.UtcNow.AddMilliseconds(100), [255, 0, 0, 255]),
+            new CapturedFrame("test", 2, 2, DateTimeOffset.UtcNow, previousPixels),
+            new CapturedFrame("test", 2, 2, DateTimeOffset.UtcNow.AddMilliseconds(100), currentPixels),
         };
-        var ocr = new CountingOcrEngine([
-            new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+        var ocr = new SequenceCountingOcrEngine([
+            [],
+            [
+                new TextRegion("changed", "S", new ScreenRect(0, 0, 1, 1), 0.9),
+            ],
+            [
+                new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+            ],
         ]);
         var pipeline = new RealtimeTranslationPipeline(
             new SequenceCaptureService(frames),
             ocr,
             new CountingTranslationService(),
-            new InMemoryTranslationCache()
+            new InMemoryTranslationCache(),
+            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
         );
 
         await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Equal(3, ocr.CallCount);
+        Assert.Equal(1, ocr.Frames[1].Width);
+        Assert.Equal(1, ocr.Frames[1].Height);
+        Assert.Equal(2, ocr.Frames[2].Width);
+        Assert.Equal(2, ocr.Frames[2].Height);
+        Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
+    }
+
+    [Fact]
+    public async Task ProcessOnceSkipsFullFrameOcrWhenChangedFrameRegionDetectsNoText() {
+        var previousPixels = new byte[4 * 4 * 4];
+        var currentPixels = previousPixels.ToArray();
+        currentPixels[(1 * 4 + 2) * 4] = 255;
+        var frames = new[] {
+            new CapturedFrame("test", 4, 4, DateTimeOffset.UtcNow, previousPixels),
+            new CapturedFrame("test", 4, 4, DateTimeOffset.UtcNow.AddMilliseconds(100), currentPixels),
+        };
+        var ocr = new SequenceCountingOcrEngine([
+            [
+                new TextRegion("text", "Start", new ScreenRect(10, 10, 40, 20), 0.9),
+            ],
+            [],
+        ]);
+        var pipeline = new RealtimeTranslationPipeline(
+            new SequenceCaptureService(frames),
+            ocr,
+            new CountingTranslationService(),
+            new InMemoryTranslationCache(),
+            RealtimeTranslationPipelineOptions.Default with { ChangedRegionPadding = 0 }
+        );
+
         await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
 
         Assert.Equal(2, ocr.CallCount);
+        Assert.Equal(1, ocr.Frames[1].Width);
+        Assert.Equal(1, ocr.Frames[1].Height);
+        Assert.Equal(new ScreenRect(10, 10, 40, 20), Assert.Single(second.Regions).Bounds);
     }
 
     [Fact]
@@ -474,9 +521,26 @@ public class RealtimeTranslationPipelineTests {
 
     protected class CountingOcrEngine(IReadOnlyList<TextRegion> regions) : IOcrEngine {
         public int CallCount { get; protected set; }
+        public List<CapturedFrame> Frames { get; } = [];
 
         public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
             CallCount++;
+            Frames.Add(frame);
+            return Task.FromResult(regions);
+        }
+    }
+
+    protected class SequenceCountingOcrEngine(IReadOnlyList<IReadOnlyList<TextRegion>> frames) : IOcrEngine {
+        protected int index;
+
+        public int CallCount { get; protected set; }
+        public List<CapturedFrame> Frames { get; } = [];
+
+        public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            CallCount++;
+            Frames.Add(frame);
+            var regions = frames[Math.Min(index, frames.Count - 1)];
+            index++;
             return Task.FromResult(regions);
         }
     }
