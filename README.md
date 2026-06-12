@@ -53,4 +53,6 @@ Current translation backend:
 - Endpoint: `http://localhost:11434`
 - Default model: `llama3.2:3b`
 
+On Windows, the app checks the Ollama runtime before the first translation request. If Ollama is not installed, it attempts to install the official `Ollama.Ollama` package with `winget`, starts the local server, and pulls the default model.
+
 This is the first real integration path. The product direction remains app-managed local models, so the Ollama dependency should later be replaced or wrapped by a bundled `llama.cpp`/GGUF runtime.

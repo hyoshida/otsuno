@@ -12,7 +12,11 @@ public class OllamaTranslationServiceTests {
             Content = JsonContent(new { response = " \"ゲーム開始\" " })
         });
         using var httpClient = new HttpClient(handler);
-        using var service = new OllamaTranslationService(new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"), httpClient);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
         var request = new TranslationRequest("Start Game", "auto", "ja");
 
         var response = await service.TranslateAsync(request, CancellationToken.None);
@@ -33,7 +37,11 @@ public class OllamaTranslationServiceTests {
     public async Task TranslateAsyncThrowsForUnsuccessfulResponse() {
         var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
         using var httpClient = new HttpClient(handler);
-        using var service = new OllamaTranslationService(new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"), httpClient);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
         var request = new TranslationRequest("Start Game", "auto", "ja");
 
         await Assert.ThrowsAsync<HttpRequestException>(() => service.TranslateAsync(request, CancellationToken.None));
@@ -51,6 +59,12 @@ public class OllamaTranslationServiceTests {
             RequestUri = request.RequestUri;
             RequestContent = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
             return response;
+        }
+    }
+
+    protected class NoOpOllamaRuntimeManager : IOllamaRuntimeManager {
+        public Task EnsureReadyAsync(OllamaTranslationOptions options, CancellationToken cancellationToken) {
+            return Task.CompletedTask;
         }
     }
 }

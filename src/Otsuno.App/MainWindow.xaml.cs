@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Media;
@@ -18,6 +19,7 @@ public partial class MainWindow : Window {
     protected readonly DispatcherTimer timer;
     protected readonly RealtimeTranslationPipeline pipeline;
     protected readonly OverlayWindow overlayWindow;
+    protected OllamaRuntimeManager? ollamaRuntimeManager;
     private bool isProcessing;
 
     public ObservableCollection<TranslationRow> Translations { get; } = [];
@@ -32,12 +34,19 @@ public partial class MainWindow : Window {
     }
 
     protected virtual RealtimeTranslationPipeline CreatePipeline() {
+        ollamaRuntimeManager = new OllamaRuntimeManager();
+        ollamaRuntimeManager.StatusChanged += OllamaRuntimeManager_StatusChanged;
+
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
             new WindowsOcrEngine(),
-            new OllamaTranslationService(),
+            new OllamaTranslationService(OllamaTranslationOptions.Default, new HttpClient(), ollamaRuntimeManager),
             new InMemoryTranslationCache()
         );
+    }
+
+    protected virtual void OllamaRuntimeManager_StatusChanged(object? sender, OllamaRuntimeStatusChangedEventArgs e) {
+        Dispatcher.InvokeAsync(() => SetStatus(e.Message));
     }
 
     protected virtual DispatcherTimer CreateTimer() {
@@ -74,13 +83,25 @@ public partial class MainWindow : Window {
         SetErrorStatus($"Pipeline error: {exception.Message}");
     }
 
-    protected virtual void StartButton_Click(object sender, RoutedEventArgs e) {
-        Start();
-        SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
+    protected virtual async void StartButton_Click(object sender, RoutedEventArgs e) {
+        StartButton.IsEnabled = false;
+
+        try {
+            await PrepareTranslationRuntimeAsync(CancellationToken.None);
+            Start();
+            SetStatus("Running screen capture, Windows OCR, and Ollama translation pipeline.");
+        } catch (Exception ex) {
+            HandlePipelineError(ex);
+            SetRunningState(false);
+        }
     }
 
     protected virtual void StopButton_Click(object sender, RoutedEventArgs e) {
         Stop();
+    }
+
+    protected virtual Task PrepareTranslationRuntimeAsync(CancellationToken cancellationToken) {
+        return ollamaRuntimeManager?.EnsureReadyAsync(OllamaTranslationOptions.Default, cancellationToken) ?? Task.CompletedTask;
     }
 
     protected virtual void Start() {
@@ -130,6 +151,10 @@ public partial class MainWindow : Window {
 
     protected override void OnClosed(EventArgs e) {
         timer.Stop();
+        if (ollamaRuntimeManager is not null) {
+            ollamaRuntimeManager.StatusChanged -= OllamaRuntimeManager_StatusChanged;
+        }
+
         overlayWindow.Close();
         base.OnClosed(e);
     }

@@ -7,6 +7,7 @@ namespace Otsuno.Infrastructure.Windows.Translation;
 
 public class OllamaTranslationService : ITranslationService, IDisposable {
     protected readonly HttpClient httpClient;
+    protected readonly IOllamaRuntimeManager runtimeManager;
     protected readonly OllamaTranslationOptions options;
 
     public OllamaTranslationService() : this(OllamaTranslationOptions.Default) {
@@ -15,14 +16,20 @@ public class OllamaTranslationService : ITranslationService, IDisposable {
     public OllamaTranslationService(OllamaTranslationOptions options) : this(options, new HttpClient()) {
     }
 
-    public OllamaTranslationService(OllamaTranslationOptions options, HttpClient httpClient) {
+    public OllamaTranslationService(OllamaTranslationOptions options, HttpClient httpClient) : this(options, httpClient, new OllamaRuntimeManager()) {
+    }
+
+    public OllamaTranslationService(OllamaTranslationOptions options, HttpClient httpClient, IOllamaRuntimeManager runtimeManager) {
         this.options = options;
         this.httpClient = httpClient;
+        this.runtimeManager = runtimeManager;
         this.httpClient.BaseAddress = options.Endpoint;
         this.httpClient.Timeout = TimeSpan.FromSeconds(30);
     }
 
     public virtual async Task<TranslationResponse> TranslateAsync(TranslationRequest request, CancellationToken cancellationToken) {
+        await runtimeManager.EnsureReadyAsync(options, cancellationToken).ConfigureAwait(false);
+
         var ollamaRequest = new OllamaGenerateRequest(options.Model, CreatePrompt(request), Stream: false);
         var response = await httpClient.PostAsJsonAsync("/api/generate", ollamaRequest, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -50,6 +57,10 @@ public class OllamaTranslationService : ITranslationService, IDisposable {
 
     public virtual void Dispose() {
         httpClient.Dispose();
+        if (runtimeManager is IDisposable disposableRuntimeManager) {
+            disposableRuntimeManager.Dispose();
+        }
+
         GC.SuppressFinalize(this);
     }
 
