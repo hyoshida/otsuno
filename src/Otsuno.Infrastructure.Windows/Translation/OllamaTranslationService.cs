@@ -475,27 +475,27 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
         return targetLanguage.ToLowerInvariant() switch {
             "ja" => new TargetLanguagePrompt(
                 "日本語",
-                "すべての Source texts を自然な日本語に翻訳してください。名前、数字、ホットキー、コントローラーのボタン、ファイルパスはそのままにしてください。日本語以外のテキストは出力しないでください。"
+                "すべての Source texts を自然な日本語に翻訳してください。"
             ),
             "en" => new TargetLanguagePrompt(
                 "English",
-                "Translate every source texts into natural English. Preserve names, numbers, hotkeys, controller buttons, and file paths. Do not output any text other than English."
+                "Translate every source texts into natural English."
             ),
             "ko" => new TargetLanguagePrompt(
                 "한국어",
-                "모든 소스 텍스트를 자연스러운 한국어로 번역하세요. 이름, 숫자, 단축키, 컨트롤러 버튼 및 파일 경로는 그대로 유지하세요. 한국어 이외의 텍스트는 출력하지 마세요."
+                "모든 소스 텍스트를 자연스러운 한국어로 번역하세요."
             ),
             "zh-hans" => new TargetLanguagePrompt(
                 "简体中文",
-                "将所有源文本翻译成简体中文。保留名称、数字、快捷键、控制器按钮和文件路径。不要输出除简体中文以外的文本。"
+                "将所有源文本翻译成简体中文。"
             ),
             "zh-hant" => new TargetLanguagePrompt(
                 "繁體中文",
-                "將所有源文本翻譯成繁體中文。保留名稱、數字、快捷鍵、控制器按鈕和文件路徑。不要輸出除繁體中文以外的文本。"
+                "將所有源文本翻譯成繁體中文。"
             ),
             _ => new TargetLanguagePrompt(
                 targetLanguage,
-                $"Translate into {targetLanguage} only. Do not output a different language."
+                $"Translate every source texts into natural {targetLanguage}."
             )
         };
     }
