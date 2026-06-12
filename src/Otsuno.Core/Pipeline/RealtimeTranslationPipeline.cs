@@ -14,6 +14,8 @@ public class RealtimeTranslationPipeline {
     protected readonly RealtimeTranslationPipelineOptions options;
     protected readonly ConcurrentDictionary<string, byte> pendingTranslations = new(StringComparer.Ordinal);
     protected readonly ConcurrentDictionary<string, TimeSpan> translationDurations = new(StringComparer.Ordinal);
+    protected readonly List<StableTextRegion> stableRegions = [];
+    protected long frameIndex;
 
     public RealtimeTranslationPipeline(
         IScreenCaptureService captureService,
@@ -43,6 +45,7 @@ public class RealtimeTranslationPipeline {
 
     public virtual async Task<TranslationFrame> ProcessOnceAsync(string targetLanguage, CancellationToken cancellationToken) {
         var frame = await captureService.CaptureAsync(cancellationToken).ConfigureAwait(false);
+        frameIndex++;
         if (frame is null) {
             return new TranslationFrame(DateTimeOffset.UtcNow, Array.Empty<TranslatedRegion>());
         }
@@ -54,7 +57,8 @@ public class RealtimeTranslationPipeline {
         var entries = new List<TranslationEntry>();
         var uncachedRequests = new List<TranslationRequest>();
 
-        foreach (var region in SelectTextRegions(textRegions)) {
+        var selectedRegions = StabilizeTextRegions(SelectTextRegions(textRegions));
+        foreach (var region in selectedRegions) {
             var request = CreateTranslationRequest(region, targetLanguage);
             if (translationCache.TryGet(request, out var cached)) {
                 entries.Add(new TranslationEntry(region, request, cached));
@@ -191,6 +195,124 @@ public class RealtimeTranslationPipeline {
             .Take(options.MaxTextRegionsPerFrame);
     }
 
+    protected virtual IReadOnlyList<TextRegion> StabilizeTextRegions(IEnumerable<TextRegion> textRegions) {
+        PruneStableRegions();
+        return textRegions
+            .Select(StabilizeTextRegion)
+            .ToArray();
+    }
+
+    protected virtual TextRegion StabilizeTextRegion(TextRegion region) {
+        var match = FindStableRegion(region);
+        if (match is null) {
+            stableRegions.Add(new StableTextRegion(region, frameIndex));
+            return region;
+        }
+
+        match.Region = MergeStableTextRegion(match.Region, region);
+        match.LastSeenFrame = frameIndex;
+        return match.Region;
+    }
+
+    protected virtual StableTextRegion? FindStableRegion(TextRegion region) {
+        return stableRegions
+            .Where(stableRegion => IsStableRegionMatch(stableRegion.Region, region))
+            .OrderByDescending(stableRegion => GetIntersectionArea(stableRegion.Region.Bounds, region.Bounds))
+            .ThenBy(stableRegion => GetTextDistance(NormalizeStableText(stableRegion.Region.Text), NormalizeStableText(region.Text)))
+            .FirstOrDefault();
+    }
+
+    protected virtual bool IsStableRegionMatch(TextRegion stableRegion, TextRegion region) {
+        return IsNearby(stableRegion.Bounds, region.Bounds)
+            && AreTextsSimilar(stableRegion.Text, region.Text);
+    }
+
+    protected virtual bool IsNearby(ScreenRect first, ScreenRect second) {
+        var firstCenterX = first.X + first.Width / 2;
+        var firstCenterY = first.Y + first.Height / 2;
+        var secondCenterX = second.X + second.Width / 2;
+        var secondCenterY = second.Y + second.Height / 2;
+        return Math.Abs(firstCenterX - secondCenterX) <= options.MaxStableRegionCenterDistance
+            && Math.Abs(firstCenterY - secondCenterY) <= options.MaxStableRegionCenterDistance;
+    }
+
+    protected virtual bool AreTextsSimilar(string first, string second) {
+        var normalizedFirst = NormalizeStableText(first);
+        var normalizedSecond = NormalizeStableText(second);
+        if (normalizedFirst.Length == 0 || normalizedSecond.Length == 0) {
+            return false;
+        }
+
+        if (normalizedFirst.Contains(normalizedSecond, StringComparison.OrdinalIgnoreCase)
+            || normalizedSecond.Contains(normalizedFirst, StringComparison.OrdinalIgnoreCase)) {
+            return true;
+        }
+
+        var maxLength = Math.Max(normalizedFirst.Length, normalizedSecond.Length);
+        var distance = GetTextDistance(normalizedFirst, normalizedSecond);
+        return distance <= Math.Max(options.MaxStableTextDistance, maxLength * options.MaxStableTextDistanceRatio);
+    }
+
+    protected virtual TextRegion MergeStableTextRegion(TextRegion stableRegion, TextRegion region) {
+        var text = ChooseStableText(stableRegion.Text, region.Text);
+        var bounds = MergeStableBounds(stableRegion.Bounds, region.Bounds);
+        var confidence = Math.Max(stableRegion.Confidence, region.Confidence);
+        return new TextRegion(stableRegion.Id, text, bounds, confidence);
+    }
+
+    protected virtual string ChooseStableText(string first, string second) {
+        return NormalizeStableText(second).Length > NormalizeStableText(first).Length ? second : first;
+    }
+
+    protected virtual ScreenRect MergeStableBounds(ScreenRect stableBounds, ScreenRect currentBounds) {
+        return new ScreenRect(
+            WeightedAverage(stableBounds.X, currentBounds.X, options.StableRegionSmoothingRatio),
+            WeightedAverage(stableBounds.Y, currentBounds.Y, options.StableRegionSmoothingRatio),
+            WeightedAverage(stableBounds.Width, currentBounds.Width, options.StableRegionSmoothingRatio),
+            WeightedAverage(stableBounds.Height, currentBounds.Height, options.StableRegionSmoothingRatio)
+        );
+    }
+
+    protected virtual int WeightedAverage(int stableValue, int currentValue, double currentRatio) {
+        return (int)Math.Round(stableValue * (1 - currentRatio) + currentValue * currentRatio);
+    }
+
+    protected virtual int GetIntersectionArea(ScreenRect first, ScreenRect second) {
+        var left = Math.Max(first.X, second.X);
+        var top = Math.Max(first.Y, second.Y);
+        var right = Math.Min(first.X + first.Width, second.X + second.Width);
+        var bottom = Math.Min(first.Y + first.Height, second.Y + second.Height);
+        return Math.Max(0, right - left) * Math.Max(0, bottom - top);
+    }
+
+    protected virtual string NormalizeStableText(string text) {
+        return Regex.Replace(text.Trim(), @"\s+", " ");
+    }
+
+    protected virtual int GetTextDistance(string first, string second) {
+        var previous = Enumerable.Range(0, second.Length + 1).ToArray();
+        var current = new int[second.Length + 1];
+
+        for (var i = 1; i <= first.Length; i++) {
+            current[0] = i;
+            for (var j = 1; j <= second.Length; j++) {
+                var cost = first[i - 1] == second[j - 1] ? 0 : 1;
+                current[j] = Math.Min(
+                    Math.Min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + cost
+                );
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        return previous[second.Length];
+    }
+
+    protected virtual void PruneStableRegions() {
+        stableRegions.RemoveAll(region => frameIndex - region.LastSeenFrame > options.StableRegionRetentionFrames);
+    }
+
     protected virtual IReadOnlyList<TextRegion> CreateTextBlocks(IEnumerable<TextRegion> textRegions) {
         var regions = textRegions
             .OrderBy(region => region.Bounds.Y)
@@ -299,6 +421,11 @@ public class RealtimeTranslationPipeline {
         public TranslationRequest Request { get; } = request;
         public TranslationResponse? Translation { get; set; } = translation;
     }
+
+    protected class StableTextRegion(TextRegion region, long lastSeenFrame) {
+        public TextRegion Region { get; set; } = region;
+        public long LastSeenFrame { get; set; } = lastSeenFrame;
+    }
 }
 
 public record RealtimeTranslationPipelineOptions(
@@ -313,7 +440,12 @@ public record RealtimeTranslationPipelineOptions(
     int MaxTextBlockLineGap,
     int MaxTextBlockIndent,
     double MaxTextBlockLineGapRatio,
-    double MinTextBlockHorizontalOverlapRatio
+    double MinTextBlockHorizontalOverlapRatio,
+    int MaxStableRegionCenterDistance,
+    int StableRegionRetentionFrames,
+    int MaxStableTextDistance,
+    double MaxStableTextDistanceRatio,
+    double StableRegionSmoothingRatio
 ) {
     public static RealtimeTranslationPipelineOptions Default { get; } = new(
         MaxTextRegionsPerFrame: 16,
@@ -327,7 +459,12 @@ public record RealtimeTranslationPipelineOptions(
         MaxTextBlockLineGap: 18,
         MaxTextBlockIndent: 48,
         MaxTextBlockLineGapRatio: 0.9,
-        MinTextBlockHorizontalOverlapRatio: 0.35
+        MinTextBlockHorizontalOverlapRatio: 0.35,
+        MaxStableRegionCenterDistance: 64,
+        StableRegionRetentionFrames: 8,
+        MaxStableTextDistance: 4,
+        MaxStableTextDistanceRatio: 0.25,
+        StableRegionSmoothingRatio: 0.35
     );
 
     public static RealtimeTranslationPipelineOptions LowLatency { get; } = new(
@@ -342,6 +479,11 @@ public record RealtimeTranslationPipelineOptions(
         MaxTextBlockLineGap: 18,
         MaxTextBlockIndent: 48,
         MaxTextBlockLineGapRatio: 0.9,
-        MinTextBlockHorizontalOverlapRatio: 0.35
+        MinTextBlockHorizontalOverlapRatio: 0.35,
+        MaxStableRegionCenterDistance: 64,
+        StableRegionRetentionFrames: 8,
+        MaxStableTextDistance: 4,
+        MaxStableTextDistanceRatio: 0.25,
+        StableRegionSmoothingRatio: 0.35
     );
 }

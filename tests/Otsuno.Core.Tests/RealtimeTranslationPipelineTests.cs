@@ -67,6 +67,34 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceStabilizesNearbyRegionPositionAndText() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var ocr = new SequenceOcrEngine([
+            [
+                new TextRegion("first", "Open the ancient gate", new ScreenRect(100, 100, 180, 24), 0.9),
+            ],
+            [
+                new TextRegion("second", "Open ancient gate", new ScreenRect(111, 108, 168, 24), 0.9),
+            ],
+        ]);
+        var translator = new CountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            ocr,
+            translator,
+            new InMemoryTranslationCache()
+        );
+
+        var first = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+        var second = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Equal("ja:Open the ancient gate", first.Regions[0].TranslatedText);
+        Assert.Equal("ja:Open the ancient gate", second.Regions[0].TranslatedText);
+        Assert.Equal("Open the ancient gate", second.Regions[0].SourceText);
+        Assert.Equal(1, translator.CallCount);
+    }
+
+    [Fact]
     public async Task ProcessOnceTranslatesTopToBottomOrder() {
         var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
         var regions = new[] {
@@ -195,6 +223,16 @@ public class RealtimeTranslationPipelineTests {
 
     protected class StubOcrEngine(IReadOnlyList<TextRegion> regions) : IOcrEngine {
         public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            return Task.FromResult(regions);
+        }
+    }
+
+    protected class SequenceOcrEngine(IReadOnlyList<IReadOnlyList<TextRegion>> frames) : IOcrEngine {
+        protected int index;
+
+        public Task<IReadOnlyList<TextRegion>> RecognizeAsync(CapturedFrame frame, CancellationToken cancellationToken) {
+            var regions = frames[Math.Min(index, frames.Count - 1)];
+            index++;
             return Task.FromResult(regions);
         }
     }
