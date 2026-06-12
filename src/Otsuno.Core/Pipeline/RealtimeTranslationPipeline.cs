@@ -104,10 +104,86 @@ public class RealtimeTranslationPipeline {
     }
 
     protected virtual IEnumerable<TextRegion> SelectTextRegions(IReadOnlyList<TextRegion> textRegions) {
-        return textRegions
+        return CreateTextBlocks(textRegions.Where(IsTranslationCandidate))
             .Where(IsTranslationCandidate)
-            .OrderByDescending(region => region.Bounds.Width * region.Bounds.Height)
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
             .Take(options.MaxTextRegionsPerFrame);
+    }
+
+    protected virtual IReadOnlyList<TextRegion> CreateTextBlocks(IEnumerable<TextRegion> textRegions) {
+        var regions = textRegions
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
+            .ToArray();
+        var blocks = new List<List<TextRegion>>();
+
+        foreach (var region in regions) {
+            var block = blocks.FirstOrDefault(block => BelongsToBlock(region, block));
+            if (block is null) {
+                blocks.Add([region]);
+            } else {
+                block.Add(region);
+            }
+        }
+
+        return blocks
+            .Select(CreateTextBlock)
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
+            .ToArray();
+    }
+
+    protected virtual bool BelongsToBlock(TextRegion region, IReadOnlyList<TextRegion> block) {
+        var bounds = GetBounds(block);
+        var verticalGap = region.Bounds.Y - (bounds.Y + bounds.Height);
+        var averageHeight = block.Average(item => item.Bounds.Height);
+        var allowedGap = Math.Max(options.MaxTextBlockLineGap, averageHeight * options.MaxTextBlockLineGapRatio);
+
+        return verticalGap >= 0
+            && verticalGap <= allowedGap
+            && HasHorizontalRelationship(region.Bounds, bounds);
+    }
+
+    protected virtual bool HasHorizontalRelationship(ScreenRect first, ScreenRect second) {
+        var overlap = GetHorizontalOverlap(first, second);
+        var minimumWidth = Math.Min(first.Width, second.Width);
+        if (minimumWidth <= 0) {
+            return false;
+        }
+
+        return overlap >= minimumWidth * options.MinTextBlockHorizontalOverlapRatio
+            || Math.Abs(first.X - second.X) <= options.MaxTextBlockIndent;
+    }
+
+    protected virtual int GetHorizontalOverlap(ScreenRect first, ScreenRect second) {
+        var left = Math.Max(first.X, second.X);
+        var right = Math.Min(first.X + first.Width, second.X + second.Width);
+        return Math.Max(0, right - left);
+    }
+
+    protected virtual TextRegion CreateTextBlock(IReadOnlyList<TextRegion> block) {
+        if (block.Count == 1) {
+            return block[0];
+        }
+
+        var orderedLines = block
+            .OrderBy(region => region.Bounds.Y)
+            .ThenBy(region => region.Bounds.X)
+            .ToArray();
+        var id = string.Join("+", orderedLines.Select(region => region.Id));
+        var text = string.Join(Environment.NewLine, orderedLines.Select(region => region.Text.Trim()));
+        var bounds = GetBounds(orderedLines);
+        var confidence = orderedLines.Average(region => region.Confidence);
+        return new TextRegion(id, text, bounds, confidence);
+    }
+
+    protected virtual ScreenRect GetBounds(IReadOnlyList<TextRegion> regions) {
+        var left = regions.Min(region => region.Bounds.X);
+        var top = regions.Min(region => region.Bounds.Y);
+        var right = regions.Max(region => region.Bounds.X + region.Bounds.Width);
+        var bottom = regions.Max(region => region.Bounds.Y + region.Bounds.Height);
+        return new ScreenRect(left, top, right - left, bottom - top);
     }
 
     protected virtual bool IsTranslationCandidate(TextRegion region) {
@@ -143,7 +219,11 @@ public record RealtimeTranslationPipelineOptions(
     int MinTextLength,
     int MaxTextLength,
     int MinRegionWidth,
-    int MinRegionHeight
+    int MinRegionHeight,
+    int MaxTextBlockLineGap,
+    int MaxTextBlockIndent,
+    double MaxTextBlockLineGapRatio,
+    double MinTextBlockHorizontalOverlapRatio
 ) {
     public static RealtimeTranslationPipelineOptions Default { get; } = new(
         MaxTextRegionsPerFrame: 16,
@@ -151,9 +231,13 @@ public record RealtimeTranslationPipelineOptions(
         MaxBackgroundTranslations: 2,
         AwaitUncachedTranslations: true,
         MinTextLength: 2,
-        MaxTextLength: 160,
+        MaxTextLength: 500,
         MinRegionWidth: 12,
-        MinRegionHeight: 8
+        MinRegionHeight: 8,
+        MaxTextBlockLineGap: 18,
+        MaxTextBlockIndent: 48,
+        MaxTextBlockLineGapRatio: 0.9,
+        MinTextBlockHorizontalOverlapRatio: 0.35
     );
 
     public static RealtimeTranslationPipelineOptions LowLatency { get; } = new(
@@ -162,8 +246,12 @@ public record RealtimeTranslationPipelineOptions(
         MaxBackgroundTranslations: 1,
         AwaitUncachedTranslations: false,
         MinTextLength: 2,
-        MaxTextLength: 160,
+        MaxTextLength: 500,
         MinRegionWidth: 12,
-        MinRegionHeight: 8
+        MinRegionHeight: 8,
+        MaxTextBlockLineGap: 18,
+        MaxTextBlockIndent: 48,
+        MaxTextBlockLineGapRatio: 0.9,
+        MinTextBlockHorizontalOverlapRatio: 0.35
     );
 }

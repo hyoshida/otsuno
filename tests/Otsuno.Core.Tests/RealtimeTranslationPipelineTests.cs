@@ -67,6 +67,61 @@ public class RealtimeTranslationPipelineTests {
     }
 
     [Fact]
+    public async Task ProcessOnceTranslatesTopToBottomOrder() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("bottom", "Bottom", new ScreenRect(10, 140, 80, 20), 0.9),
+            new TextRegion("top-right", "Top right", new ScreenRect(120, 20, 80, 20), 0.9),
+            new TextRegion("top-left", "Top left", new ScreenRect(10, 20, 80, 20), 0.9),
+        };
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            new CountingTranslationService(),
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Collection(
+            frame.Regions,
+            region => Assert.Equal("top-left", region.RegionId),
+            region => Assert.Equal("top-right", region.RegionId),
+            region => Assert.Equal("bottom", region.RegionId)
+        );
+    }
+
+    [Fact]
+    public async Task ProcessOnceGroupsNearbyLinesIntoTextBlock() {
+        var capture = new CapturedFrame("test", 400, 400, DateTimeOffset.UtcNow, []);
+        var regions = new[] {
+            new TextRegion("line-1", "Welcome back,", new ScreenRect(20, 40, 120, 20), 0.9),
+            new TextRegion("line-2", "hero of light.", new ScreenRect(22, 62, 118, 20), 0.9),
+            new TextRegion("separate", "Start", new ScreenRect(20, 180, 60, 20), 0.9),
+        };
+        var translator = new CountingTranslationService();
+        var pipeline = new RealtimeTranslationPipeline(
+            new StubCaptureService(capture),
+            new StubOcrEngine(regions),
+            translator,
+            new InMemoryTranslationCache()
+        );
+
+        var frame = await pipeline.ProcessOnceAsync("ja", CancellationToken.None);
+
+        Assert.Collection(
+            frame.Regions,
+            region => {
+                Assert.Equal("line-1+line-2", region.RegionId);
+                Assert.Equal($"ja:Welcome back,{Environment.NewLine}hero of light.", region.TranslatedText);
+                Assert.Equal(new ScreenRect(20, 40, 120, 42), region.Bounds);
+            },
+            region => Assert.Equal("separate", region.RegionId)
+        );
+        Assert.Equal(2, translator.CallCount);
+    }
+
+    [Fact]
     public async Task LowLatencyModeQueuesUncachedTranslationWithoutBlockingFrame() {
         var capture = new CapturedFrame("test", 100, 100, DateTimeOffset.UtcNow, []);
         var regions = new[] {
