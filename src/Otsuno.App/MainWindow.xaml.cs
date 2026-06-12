@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.ComponentModel;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -59,6 +60,7 @@ public partial class MainWindow : Window {
         ollamaRuntimeManager = CreateOllamaRuntimeManager();
         overlayWindow = new OverlayWindow();
         timer = CreateTimer();
+        VersionText.Text = GetAppVersionName();
         ApplySettings(settingsStore.Load());
         TranslationModelCombo.SelectionChanged += TranslationModelCombo_SelectionChanged;
         SourceLanguageCombo.SelectionChanged += SourceLanguageCombo_SelectionChanged;
@@ -78,6 +80,13 @@ public partial class MainWindow : Window {
         var runtimeManager = new OllamaRuntimeManager();
         runtimeManager.StatusChanged += OllamaRuntimeManager_StatusChanged;
         return runtimeManager;
+    }
+
+    protected virtual string GetAppVersionName() {
+        var version = typeof(MainWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        return string.IsNullOrWhiteSpace(version) ? "Version unknown" : version;
     }
 
     protected virtual RealtimeTranslationPipeline CreatePipeline(OllamaTranslationOptions options) {

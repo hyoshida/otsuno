@@ -64,7 +64,14 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel VerticalAlignment="Center">
-                <TextBlock Text="Otsuno" Foreground="{StaticResource TextBrush}" FontSize="28" FontWeight="SemiBold" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Otsuno" Foreground="{StaticResource TextBrush}" FontSize="28" FontWeight="SemiBold" />
+                    <TextBlock x:Name="VersionText"
+                               Foreground="{StaticResource MutedTextBrush}"
+                               FontSize="11"
+                               Margin="8,0,0,4"
+                               VerticalAlignment="Bottom" />
+                </StackPanel>
                 <TextBlock Text="Otaku Translation System by Unified Neural Operations." Foreground="{StaticResource SubtleTextBrush}" FontSize="13" />
             </StackPanel>
 
