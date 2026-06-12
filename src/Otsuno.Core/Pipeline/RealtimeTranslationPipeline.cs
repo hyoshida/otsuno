@@ -112,7 +112,13 @@ public class RealtimeTranslationPipeline {
             .ToArray();
         var debugRegions = entries
             .Where(entry => entry.Translation is null)
-            .Select(entry => new DebugTextRegion(entry.Region.Id, entry.Region.Bounds, entry.Region.Text, ocrStopwatch.Elapsed))
+            .Select(entry => new DebugTextRegion(
+                entry.Region.Id,
+                entry.Region.Bounds,
+                entry.Region.Text,
+                ocrStopwatch.Elapsed,
+                GetTranslationDebugInfo(entry.Request)
+            ))
             .ToArray();
         return new TranslationFrame(frame.CapturedAt, translatedRegions, debugRegions);
     }
@@ -567,12 +573,24 @@ public class RealtimeTranslationPipeline {
             translation.TranslatedText,
             region.Confidence,
             translation.FromCache,
-            GetTranslationDuration(translation)
+            GetTranslationDuration(translation),
+            GetTranslationDebugInfo(translation)
         );
     }
 
     protected virtual TimeSpan? GetTranslationDuration(TranslationResponse translation) {
         return translationDurations.TryGetValue(BuildPendingKey(translation), out var duration) ? duration : null;
+    }
+
+    protected virtual TranslationDebugInfo? GetTranslationDebugInfo(TranslationResponse translation) {
+        return GetTranslationDebugInfo(new TranslationRequest(translation.SourceText, translation.SourceLanguage, translation.TargetLanguage));
+    }
+
+    protected virtual TranslationDebugInfo? GetTranslationDebugInfo(TranslationRequest request) {
+        return translationService is ITranslationDebugInfoProvider provider
+            && provider.TryGetDebugInfo(request, out var debugInfo)
+                ? debugInfo
+                : null;
     }
 
     protected class TranslationEntry(TextRegion region, TranslationRequest request, TranslationResponse? translation) {

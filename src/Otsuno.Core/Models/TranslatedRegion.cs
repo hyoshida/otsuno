@@ -7,5 +7,6 @@ public record TranslatedRegion(
     string TranslatedText,
     double Confidence,
     bool FromCache,
-    TimeSpan? TranslationDuration = null
+    TimeSpan? TranslationDuration = null,
+    TranslationDebugInfo? TranslationDebugInfo = null
 );

@@ -184,6 +184,36 @@ public class OllamaTranslationServiceTests {
 
         Assert.Equal("Start the game", response.TranslatedText);
         Assert.Equal(2, handler.RequestCount);
+        Assert.True(service.TryGetDebugInfo(request, out var debugInfo));
+        Assert.Equal(2, debugInfo.RequestCount);
+        Assert.Equal("Start the game", debugInfo.LastResponseText);
+        Assert.Null(debugInfo.LastError);
+    }
+
+    [Fact]
+    public async Task TranslateAsyncKeepsDebugInfoWhenEnglishTargetStillDoesNotLookEnglish() {
+        var handler = new StubHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "またですか？" } } }) })
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "またですか？" } } }) })
+            }
+        );
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var request = new TranslationRequest("またですか？", "ja", "en");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TranslateAsync(request, CancellationToken.None));
+
+        Assert.True(service.TryGetDebugInfo(request, out var debugInfo));
+        Assert.Equal(2, debugInfo.RequestCount);
+        Assert.Equal("またですか？", debugInfo.LastResponseText);
+        Assert.Equal("Rejected: response still contains the source text.", debugInfo.LastError);
     }
 
     [Fact]

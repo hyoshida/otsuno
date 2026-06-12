@@ -60,10 +60,10 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual void RenderDebugRegion(DebugTextRegion region) {
-        var label = CreateLabel(region.SourceText, CreateDebugMetaText(region), DebugLabelBrush, DebugBorderBrush);
+        var label = CreateLabel(CreateDebugBodyText(region), CreateDebugMetaText(region), DebugLabelBrush, DebugBorderBrush);
         Canvas.SetLeft(label, Math.Max(0, region.Bounds.X));
         Canvas.SetTop(label, Math.Max(0, region.Bounds.Y));
-        label.Width = Math.Max(region.Bounds.Width, 48);
+        label.Width = Math.Max(region.Bounds.Width, region.TranslationDebugInfo is null ? 48 : 240);
         label.MinHeight = Math.Max(region.Bounds.Height, 20);
         OverlayCanvas.Children.Add(label);
     }
@@ -77,15 +77,63 @@ public partial class OverlayWindow : Window {
     }
 
     protected virtual string? CreateTranslatedMetaText(TranslatedRegion region, bool debugMode) {
-        if (!debugMode || region.TranslationDuration is null) {
+        if (!debugMode) {
             return null;
         }
 
-        return $"TR {FormatDuration(region.TranslationDuration.Value)}";
+        return string.Join(
+            " | ",
+            new[] {
+                region.TranslationDuration is null ? null : $"TR {FormatDuration(region.TranslationDuration.Value)}",
+                CreateOllamaRequestCountText(region.TranslationDebugInfo)
+            }.Where(text => !string.IsNullOrWhiteSpace(text))
+        );
     }
 
     protected virtual string CreateDebugMetaText(DebugTextRegion region) {
-        return $"OCR {FormatDuration(region.OcrDuration)}";
+        return string.Join(
+            " | ",
+            new[] {
+                $"OCR {FormatDuration(region.OcrDuration)}",
+                CreateOllamaRequestCountText(region.TranslationDebugInfo)
+            }.Where(text => !string.IsNullOrWhiteSpace(text))
+        );
+    }
+
+    protected virtual string CreateDebugBodyText(DebugTextRegion region) {
+        if (region.TranslationDebugInfo is null) {
+            return region.SourceText;
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            new[] {
+                region.SourceText,
+                CreateOllamaResponseText(region.TranslationDebugInfo),
+                CreateOllamaErrorText(region.TranslationDebugInfo)
+            }.Where(text => !string.IsNullOrWhiteSpace(text))
+        );
+    }
+
+    protected virtual string? CreateOllamaRequestCountText(TranslationDebugInfo? debugInfo) {
+        return debugInfo is null ? null : $"OL {debugInfo.RequestCount} req";
+    }
+
+    protected virtual string? CreateOllamaResponseText(TranslationDebugInfo debugInfo) {
+        return string.IsNullOrWhiteSpace(debugInfo.LastResponseText)
+            ? null
+            : $"Ollama: {Truncate(debugInfo.LastResponseText, 160)}";
+    }
+
+    protected virtual string? CreateOllamaErrorText(TranslationDebugInfo debugInfo) {
+        return string.IsNullOrWhiteSpace(debugInfo.LastError)
+            ? null
+            : $"Error: {Truncate(debugInfo.LastError, 160)}";
+    }
+
+    protected virtual string Truncate(string text, int maxLength) {
+        var normalized = string.Join(" ", text.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= maxLength ? normalized : $"{normalized[..(maxLength - 3)]}...";
     }
 
     protected virtual string FormatDuration(TimeSpan duration) {

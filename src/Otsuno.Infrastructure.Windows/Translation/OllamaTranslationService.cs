@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,12 +7,13 @@ using Otsuno.Core.Models;
 
 namespace Otsuno.Infrastructure.Windows.Translation;
 
-public class OllamaTranslationService : IBatchTranslationService, IDisposable {
+public class OllamaTranslationService : IBatchTranslationService, ITranslationDebugInfoProvider, IDisposable {
     protected const int MaxTranslationAttempts = 2;
 
     protected readonly HttpClient httpClient;
     protected readonly IOllamaRuntimeManager runtimeManager;
     protected readonly OllamaTranslationOptions options;
+    protected readonly ConcurrentDictionary<string, TranslationDebugInfo> debugInfos = new(StringComparer.Ordinal);
 
     public OllamaTranslationService() : this(OllamaTranslationOptions.Default) {
     }
@@ -39,10 +41,18 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
         await runtimeManager.EnsureReadyAsync(options, cancellationToken).ConfigureAwait(false);
 
         for (var attempt = 0; attempt < MaxTranslationAttempts; attempt++) {
-            var translatedTexts = await GenerateTranslatedTextsAsync(requests, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<string> translatedTexts;
+            try {
+                translatedTexts = await GenerateTranslatedTextsAsync(requests, cancellationToken).ConfigureAwait(false);
+            } catch (Exception ex) {
+                RecordDebugInfo(requests, null, ex.Message);
+                throw;
+            }
+
             var responses = requests
                 .Select((request, index) => CreateTranslationResponse(request, translatedTexts[index]))
                 .ToArray();
+            RecordDebugInfo(responses);
             if (responses.All(response => !ShouldRetryTranslation(response))) {
                 return responses;
             }
@@ -75,6 +85,45 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
         }
 
         return new TranslationResponse(request.SourceText, normalizedText, request.SourceLanguage, request.TargetLanguage, FromCache: false);
+    }
+
+    public virtual bool TryGetDebugInfo(TranslationRequest request, out TranslationDebugInfo debugInfo) {
+        return debugInfos.TryGetValue(GetDebugInfoKey(request), out debugInfo!);
+    }
+
+    protected virtual void RecordDebugInfo(IReadOnlyList<TranslationResponse> responses) {
+        foreach (var response in responses) {
+            var request = new TranslationRequest(response.SourceText, response.SourceLanguage, response.TargetLanguage);
+            RecordDebugInfo(request, response.TranslatedText, GetTranslationRetryReason(response));
+        }
+    }
+
+    protected virtual void RecordDebugInfo(IReadOnlyList<TranslationRequest> requests, string? responseText, string? error) {
+        foreach (var request in requests) {
+            RecordDebugInfo(request, responseText, error);
+        }
+    }
+
+    protected virtual void RecordDebugInfo(TranslationRequest request, string? responseText, string? error) {
+        debugInfos.AddOrUpdate(
+            GetDebugInfoKey(request),
+            _ => new TranslationDebugInfo(1, responseText, error),
+            (_, existing) => existing with {
+                RequestCount = existing.RequestCount + 1,
+                LastResponseText = responseText,
+                LastError = error
+            }
+        );
+    }
+
+    protected virtual string GetDebugInfoKey(TranslationRequest request) {
+        return string.Join(
+            "|",
+            NormalizeComparableText(request.SourceText),
+            request.SourceLanguage,
+            request.TargetLanguage,
+            request.Context
+        );
     }
 
     protected virtual string CreatePrompt(IReadOnlyList<TranslationRequest> requests) {
@@ -129,6 +178,16 @@ public class OllamaTranslationService : IBatchTranslationService, IDisposable {
 
     protected virtual bool ShouldRetryTranslation(TranslationResponse response) {
         return ContainsSourceText(response) || !LooksLikeTargetLanguage(response);
+    }
+
+    protected virtual string? GetTranslationRetryReason(TranslationResponse response) {
+        if (ContainsSourceText(response)) {
+            return "Rejected: response still contains the source text.";
+        }
+
+        return LooksLikeTargetLanguage(response)
+            ? null
+            : "Rejected: response does not look like the target language.";
     }
 
     protected virtual bool LooksLikeTargetLanguage(TranslationResponse response) {
