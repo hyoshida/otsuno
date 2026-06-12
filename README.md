@@ -25,6 +25,27 @@ Run the app:
 dotnet run --project src/Otsuno.App/Otsuno.App.csproj
 ```
 
+Run tests:
+
+```bash
+dotnet test Otsuno.slnx
+```
+
+Run tests without rebuilding after a successful build:
+
+```bash
+dotnet test Otsuno.slnx --no-build
+```
+
+Run a specific test project:
+
+```bash
+dotnet test tests/Otsuno.Core.Tests/Otsuno.Core.Tests.csproj
+dotnet test tests/Otsuno.Infrastructure.Windows.Tests/Otsuno.Infrastructure.Windows.Tests.csproj
+```
+
+The test suite uses xUnit. `Otsuno.Core.Tests` covers the translation cache and realtime translation pipeline. `Otsuno.Infrastructure.Windows.Tests` covers Windows infrastructure behavior that can be tested without requiring a live game, OCR target window, or Ollama server.
+
 The app currently uses real primary-screen capture, Windows OCR, and an Ollama-compatible local translation endpoint.
 
 Current translation backend:

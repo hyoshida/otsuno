@@ -53,7 +53,11 @@ public class OllamaTranslationService : ITranslationService, IDisposable {
         GC.SuppressFinalize(this);
     }
 
-    protected record OllamaGenerateRequest(string Model, string Prompt, bool Stream);
+    protected record OllamaGenerateRequest(
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("prompt")] string Prompt,
+        [property: JsonPropertyName("stream")] bool Stream
+    );
 
     protected record OllamaGenerateResponse([property: JsonPropertyName("response")] string Response);
 }

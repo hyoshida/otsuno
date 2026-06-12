@@ -4,4 +4,8 @@
     <Project Path="src/Otsuno.Core/Otsuno.Core.csproj" />
     <Project Path="src/Otsuno.Infrastructure.Windows/Otsuno.Infrastructure.Windows.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Otsuno.Core.Tests/Otsuno.Core.Tests.csproj" />
+    <Project Path="tests/Otsuno.Infrastructure.Windows.Tests/Otsuno.Infrastructure.Windows.Tests.csproj" />
+  </Folder>
 </Solution>
