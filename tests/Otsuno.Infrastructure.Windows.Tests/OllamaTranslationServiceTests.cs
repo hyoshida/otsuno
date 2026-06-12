@@ -36,6 +36,33 @@ public class OllamaTranslationServiceTests {
         Assert.Contains("日本語", ReadPrompt(handler.RequestContent));
     }
 
+    [Fact]
+    public async Task TranslateAsyncLogsReadableJapaneseRequestAndResponse() {
+        var handler = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = JsonContent(new { response = JsonSerializer.Serialize(new { translations = new[] { new { id = "t0", translatedText = "ゲーム開始" } } }) })
+        });
+        using var httpClient = new HttpClient(handler);
+        using var service = new OllamaTranslationService(
+            new OllamaTranslationOptions(new Uri("http://localhost:11434"), "test-model"),
+            httpClient,
+            new NoOpOllamaRuntimeManager()
+        );
+        var logs = new List<OllamaExchangeLoggedEventArgs>();
+        service.ExchangeLogged += (_, e) => logs.Add(e);
+        var request = new TranslationRequest("開始", "ja", "ja");
+
+        await service.TranslateAsync(request, CancellationToken.None);
+
+        var requestLog = Assert.Single(logs, log => log.Direction == "Request");
+        var responseLog = Assert.Single(logs, log => log.Direction == "Response");
+        Assert.Contains("Prompt:", requestLog.Content);
+        Assert.Contains("Source texts:", requestLog.Content);
+        Assert.Contains("開始", requestLog.Content);
+        Assert.Contains("ゲーム開始", responseLog.Content);
+        Assert.DoesNotContain("\\u958b", requestLog.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\\u30b2", responseLog.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("ja", "日本語")]
     [InlineData("en", "English")]

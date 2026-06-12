@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Documents;
@@ -27,6 +28,13 @@ public partial class MainWindow : Window {
 
     protected readonly AppSettingsStore settingsStore = new();
     protected readonly List<LogLine> logLines = [];
+    protected readonly object logFileLock = new();
+    protected readonly string mainWindowLogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Otsuno",
+        "logs",
+        "Otsuno.log"
+    );
     protected readonly DispatcherTimer timer;
     protected readonly OverlayWindow overlayWindow;
     protected OllamaRuntimeManager? ollamaRuntimeManager;
@@ -53,6 +61,7 @@ public partial class MainWindow : Window {
         DebugModeCheckBox.Unchecked += DebugModeCheckBox_Changed;
         UpdateTranslationFrequency();
         AppendLog("Status", "Ready.");
+        AppendLog("Log", mainWindowLogPath);
     }
 
     protected virtual OllamaRuntimeManager CreateOllamaRuntimeManager() {
@@ -74,11 +83,21 @@ public partial class MainWindow : Window {
         return new RealtimeTranslationPipeline(
             new PrimaryScreenCaptureService(),
             ocrEngine,
-            new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager()),
+            CreateTranslationService(options),
             new InMemoryTranslationCache(),
             GetSelectedPipelineOptions(),
             sourceLanguage
         );
+    }
+
+    protected virtual OllamaTranslationService CreateTranslationService(OllamaTranslationOptions options) {
+        var service = new OllamaTranslationService(options, new HttpClient(), ollamaRuntimeManager ?? CreateOllamaRuntimeManager());
+        service.ExchangeLogged += OllamaTranslationService_ExchangeLogged;
+        return service;
+    }
+
+    protected virtual void OllamaTranslationService_ExchangeLogged(object? sender, OllamaExchangeLoggedEventArgs e) {
+        Dispatcher.InvokeAsync(() => AppendLog($"Ollama {e.Direction}", ShortenLogText(e.Content, 1_200), e.Content));
     }
 
     protected virtual void OllamaRuntimeManager_StatusChanged(object? sender, OllamaRuntimeStatusChangedEventArgs e) {
@@ -296,14 +315,34 @@ public partial class MainWindow : Window {
         );
     }
 
-    protected virtual void AppendLog(string category, string message) {
+    protected virtual void AppendLog(string category, string message, string? fileMessage = null) {
         logLines.Add(new LogLine($"[{DateTime.Now:HH:mm:ss}] {category}: ", message));
         while (logLines.Count > MaxLogLines) {
             logLines.RemoveAt(0);
         }
 
+        WriteMainWindowLog(category, fileMessage ?? message);
         RenderLogLines();
         LogText.ScrollToEnd();
+    }
+
+    protected virtual void WriteMainWindowLog(string category, string message) {
+        try {
+            lock (logFileLock) {
+                Directory.CreateDirectory(Path.GetDirectoryName(mainWindowLogPath)!);
+                File.AppendAllText(
+                    mainWindowLogPath,
+                    string.Join(
+                        Environment.NewLine,
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {category}",
+                        message,
+                        string.Empty
+                    )
+                );
+            }
+        } catch {
+            // Logging must never break the live translation UI.
+        }
     }
 
     protected virtual void RenderLogLines() {

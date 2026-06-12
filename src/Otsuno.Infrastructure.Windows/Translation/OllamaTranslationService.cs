@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
-using System.Net.Http.Json;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Otsuno.Core.Abstractions;
@@ -9,11 +10,16 @@ namespace Otsuno.Infrastructure.Windows.Translation;
 
 public class OllamaTranslationService : IBatchTranslationService, ITranslationDebugInfoProvider, IDisposable {
     protected const int MaxTranslationAttempts = 2;
+    protected static readonly JsonSerializerOptions ReadableJsonOptions = new() {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     protected readonly HttpClient httpClient;
     protected readonly IOllamaRuntimeManager runtimeManager;
     protected readonly OllamaTranslationOptions options;
     protected readonly ConcurrentDictionary<string, TranslationDebugInfo> debugInfos = new(StringComparer.Ordinal);
+
+    public event EventHandler<OllamaExchangeLoggedEventArgs>? ExchangeLogged;
 
     public OllamaTranslationService() : this(OllamaTranslationOptions.Default) {
     }
@@ -85,11 +91,100 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
             Format: "json",
             Options: new OllamaGenerateOptions(Temperature: 0)
         );
-        var response = await httpClient.PostAsJsonAsync("/api/generate", ollamaRequest, cancellationToken).ConfigureAwait(false);
+        var requestJson = JsonSerializer.Serialize(ollamaRequest, ReadableJsonOptions);
+        LogExchange("Request", CreateRequestLog(ollamaRequest, requestJson));
+
+        using var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+        var response = await httpClient.PostAsync("/api/generate", content, cancellationToken).ConfigureAwait(false);
+        var responseJson = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        LogExchange("Response", CreateResponseLog(response, responseJson));
         response.EnsureSuccessStatusCode();
 
-        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken).ConfigureAwait(false);
+        var ollamaResponse = JsonSerializer.Deserialize<OllamaGenerateResponse>(responseJson);
         return ExtractTranslatedTexts(ollamaResponse?.Response, requests);
+    }
+
+    protected virtual string CreateRequestLog(OllamaGenerateRequest request, string requestJson) {
+        return string.Join(
+            Environment.NewLine,
+            $"Model: {request.Model}",
+            "Prompt:",
+            request.Prompt,
+            "Request JSON:",
+            FormatJsonForLog(requestJson)
+        );
+    }
+
+    protected virtual string CreateResponseLog(HttpResponseMessage response, string responseJson) {
+        var responseText = TryReadOllamaResponseText(responseJson);
+        var parts = new List<string> {
+            $"{(int)response.StatusCode} {response.ReasonPhrase}",
+            FormatJsonForLog(responseJson)
+        };
+        if (!string.IsNullOrWhiteSpace(responseText)) {
+            parts.Add("Decoded response:");
+            parts.Add(FormatJsonForLog(responseText));
+        }
+
+        return string.Join(Environment.NewLine, parts);
+    }
+
+    protected virtual string FormatJsonForLog(string json) {
+        try {
+            using var document = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(CreateReadableJsonValue(document.RootElement), ReadableJsonOptions);
+        } catch (JsonException) {
+            return json;
+        }
+    }
+
+    protected virtual object? CreateReadableJsonValue(JsonElement element) {
+        return element.ValueKind switch {
+            JsonValueKind.Object => element.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => CreateReadableJsonValue(property.Value),
+                StringComparer.Ordinal
+            ),
+            JsonValueKind.Array => element.EnumerateArray().Select(CreateReadableJsonValue).ToArray(),
+            JsonValueKind.String => CreateReadableStringValue(element.GetString()),
+            JsonValueKind.Number => CreateReadableNumberValue(element),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    protected virtual object? CreateReadableStringValue(string? text) {
+        if (string.IsNullOrWhiteSpace(text)) {
+            return text;
+        }
+
+        try {
+            using var document = JsonDocument.Parse(text);
+            return CreateReadableJsonValue(document.RootElement);
+        } catch (JsonException) {
+            return text;
+        }
+    }
+
+    protected virtual object CreateReadableNumberValue(JsonElement element) {
+        if (element.TryGetInt64(out var integer)) {
+            return integer;
+        }
+
+        return element.GetDouble();
+    }
+
+    protected virtual string? TryReadOllamaResponseText(string responseJson) {
+        try {
+            return JsonSerializer.Deserialize<OllamaGenerateResponse>(responseJson)?.Response;
+        } catch (JsonException) {
+            return null;
+        }
+    }
+
+    protected virtual void LogExchange(string direction, string content) {
+        ExchangeLogged?.Invoke(this, new OllamaExchangeLoggedEventArgs(direction, content));
     }
 
     protected virtual TranslationResponse CreateTranslationResponse(TranslationRequest request, string translatedText) {
@@ -164,7 +259,7 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
             "Return valid JSON only with this exact shape:",
             "{\"translations\":[{\"id\":\"t0\",\"translatedText\":\"...\"}]}",
             "Source texts:",
-            JsonSerializer.Serialize(CreatePromptItems(requests))
+            JsonSerializer.Serialize(CreatePromptItems(requests), ReadableJsonOptions)
         ).Replace($"{Environment.NewLine}{Environment.NewLine}", Environment.NewLine, StringComparison.Ordinal);
     }
 
@@ -432,4 +527,9 @@ public class OllamaTranslationService : IBatchTranslationService, ITranslationDe
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("text")] string Text
     );
+}
+
+public class OllamaExchangeLoggedEventArgs(string direction, string content) : EventArgs {
+    public string Direction { get; } = direction;
+    public string Content { get; } = content;
 }
